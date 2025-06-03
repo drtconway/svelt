@@ -1,14 +1,20 @@
 use std::collections::HashMap;
 
-
 pub struct ChromSet {
     names: Vec<String>,
-    index: HashMap<String, usize>
+    index: HashMap<String, usize>,
 }
 
 impl ChromSet {
     pub fn new() -> Self {
-        ChromSet { names: Vec::new(), index: HashMap::new() }
+        ChromSet {
+            names: Vec::new(),
+            index: HashMap::new(),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.names.len()
     }
 
     pub fn add_or_get(&mut self, name: &str) -> usize {
@@ -28,5 +34,17 @@ impl ChromSet {
 
     pub fn index(&self, name: &str) -> Option<usize> {
         self.index.get(name).map(|x| *x)
+    }
+}
+
+impl From<&[&str]> for ChromSet {
+    fn from(value: &[&str]) -> Self {
+        let names: Vec<String> = value.iter().map(|chrom| String::from(*chrom)).collect();
+        let index: HashMap<String, usize> = value
+            .iter()
+            .enumerate()
+            .map(|(ix, chrom)| (String::from(*chrom), ix))
+            .collect();
+        ChromSet { names, index }
     }
 }

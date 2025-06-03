@@ -7,7 +7,7 @@ use crate::{chroms::ChromSet, errors::{as_io_error, SveltError}};
 
 
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum VariantKind {
     INS, DEL, DUP, INV, BND, CPX
 }
@@ -30,7 +30,7 @@ impl TryFrom<&str> for VariantKind {
 
 
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct VariantKey {
     chrom_id: usize,
     start: usize,
