@@ -1,9 +1,14 @@
-use std::{collections::HashMap, io::BufRead, rc::Rc};
+use std::{
+    io::{BufRead, Error, ErrorKind},
+    rc::Rc,
+};
 
 use clap::{Parser, Subcommand};
-use log::Log;
+use datafusion::{
+    functions_aggregate::{count::count, expr_fn::{array_agg, bit_or}, string_agg::string_agg}, prelude::{col, concat, lit, make_array, DataFrame, SessionContext}
+};
 use noodles::vcf::{self, Header};
-use svelt::{chroms::ChromSet, keys::VariantKey, vcf_reader::VcfReader};
+use svelt::{chroms::ChromSet, tables::load_vcf_core, vcf_reader::VcfReader};
 
 /// Structuaral Variant (SV) VCF merging
 #[derive(Debug, Parser)]
@@ -44,7 +49,6 @@ fn load_chroms(path: &str) -> std::io::Result<ChromSet> {
     Ok(chroms)
 }
 
-
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     env_logger::init();
@@ -60,18 +64,59 @@ async fn main() -> std::io::Result<()> {
                 let reader = VcfReader::new(vcf, chroms.clone())?;
                 readers.push(reader);
             }
+            let n = readers.len();
 
-            let mut sigs: HashMap<VariantKey, Vec<(usize,usize)>> = HashMap::new();
+            let ctx = SessionContext::new();
+
+            let mut acc: Option<DataFrame> = None;
             for vix in 0..readers.len() {
                 log::info!("reading {}", readers[vix].path);
                 let reader: &mut VcfReader = &mut readers[vix];
-                for (rn, rec) in reader.reader.records().enumerate() {
-                    let rec = rec?;
-                    let sig = VariantKey::new(&rec, &reader.header, reader.chroms.as_ref())?;
-                    sigs.entry(sig).or_default().push((vix, rn));
+                let records = load_vcf_core(reader)?;
+                let df = ctx
+                    .read_batch(records)
+                    .map_err(|e| Error::new(ErrorKind::Other, e))?;
+                let df = df.with_column("vix", lit(1u32 << vix))?
+                    .with_column("row_id", make_array(vec![lit(vix as u32), col("row_num")]))?;
+                if let Some(df0) = acc {
+                    let df = df0.union(df)?;
+                    acc = Some(df);
+                } else {
+                    acc = Some(df)
                 }
             }
-            log::info!("scanned {} signatures", sigs.len());
+            let df = acc.unwrap();
+            let df = df.aggregate(
+                vec![
+                    col("chrom_id"),
+                    col("start"),
+                    col("end"),
+                    col("kind"),
+                    col("length"),
+                    col("chrom2_id"),
+                    col("end2"),
+                    col("seq_hash"),
+                ],
+                vec![
+                    array_agg(col("row_id")).alias("rows"),
+                    count(col("vix")).alias("vix_count"),
+                    bit_or(col("vix")).alias("vix_set"),
+                ],
+            )?;
+            df.clone()
+                //.filter(col("vix_count").eq(lit(n as i32)))?
+                .sort(vec![
+                    col("chrom_id").sort(true, true),
+                    col("start").sort(true, true),
+                    col("end").sort(true, true),
+                    col("kind").sort(true, true),
+                    col("length").sort(true, true),
+                    col("chrom2_id").sort(true, true),
+                    col("end2").sort(true, true),
+                    col("seq_hash").sort(true, true),
+                ])?
+                .show()
+                .await?;
         }
     }
     Ok(())
