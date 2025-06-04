@@ -1,6 +1,7 @@
 use std::{collections::HashMap, io::BufRead, rc::Rc};
 
 use clap::{Parser, Subcommand};
+use log::Log;
 use noodles::vcf::{self, Header};
 use svelt::{chroms::ChromSet, keys::VariantKey, vcf_reader::VcfReader};
 
@@ -44,7 +45,10 @@ fn load_chroms(path: &str) -> std::io::Result<ChromSet> {
 }
 
 
-fn main() -> std::io::Result<()> {
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    env_logger::init();
+
     let cli = Cli::parse();
 
     match cli.command {
@@ -59,6 +63,7 @@ fn main() -> std::io::Result<()> {
 
             let mut sigs: HashMap<VariantKey, Vec<(usize,usize)>> = HashMap::new();
             for vix in 0..readers.len() {
+                log::info!("reading {}", readers[vix].path);
                 let reader: &mut VcfReader = &mut readers[vix];
                 for (rn, rec) in reader.reader.records().enumerate() {
                     let rec = rec?;
@@ -66,6 +71,7 @@ fn main() -> std::io::Result<()> {
                     sigs.entry(sig).or_default().push((vix, rn));
                 }
             }
+            log::info!("scanned {} signatures", sigs.len());
         }
     }
     Ok(())
