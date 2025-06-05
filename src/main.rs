@@ -5,7 +5,18 @@ use std::{
 
 use clap::{Parser, Subcommand};
 use datafusion::{
-    functions_aggregate::{count::count, expr_fn::{array_agg, bit_or}, string_agg::string_agg}, prelude::{col, concat, lit, make_array, DataFrame, SessionContext}
+    arrow::datatypes::DataType,
+    functions_aggregate::{
+        count::count,
+        expr_fn::{array_agg, bit_or},
+        min_max::min,
+        string_agg::string_agg,
+    },
+    functions_window::expr_fn::row_number,
+    prelude::{
+        DataFrame, SessionContext, abs, array_concat, array_distinct, case, cast, col, concat, lit,
+        make_array, sha256, unnest,
+    },
 };
 use noodles::vcf::{self, Header};
 use svelt::{chroms::ChromSet, tables::load_vcf_core, vcf_reader::VcfReader};
@@ -76,8 +87,10 @@ async fn main() -> std::io::Result<()> {
                 let df = ctx
                     .read_batch(records)
                     .map_err(|e| Error::new(ErrorKind::Other, e))?;
-                let df = df.with_column("vix", lit(1u32 << vix))?
-                    .with_column("row_id", make_array(vec![lit(vix as u32), col("row_num")]))?;
+                let df = df
+                    .with_column("vix", lit(1u32 << vix))?
+                    .with_column("row_id", lit(vix as u32) + (col("row_num") * lit(100)))?;
+
                 if let Some(df0) = acc {
                     let df = df0.union(df)?;
                     acc = Some(df);
@@ -85,38 +98,160 @@ async fn main() -> std::io::Result<()> {
                     acc = Some(df)
                 }
             }
-            let df = acc.unwrap();
-            let df = df.aggregate(
-                vec![
+            let orig = acc.unwrap();
+            let orig = orig.with_column("grow", row_number())?;
+
+            let exact = orig
+                .clone()
+                .aggregate(
+                    vec![
+                        col("chrom_id"),
+                        col("start"),
+                        col("end"),
+                        col("kind"),
+                        col("length"),
+                        col("chrom2_id"),
+                        col("end2"),
+                        col("seq_hash"),
+                    ],
+                    vec![
+                        min(col("grow")).alias("row_key"),
+                        count(col("vix")).alias("vix_count"),
+                        bit_or(col("vix")).alias("vix_set"),
+                    ],
+                )?
+                .select(vec![
+                    col("chrom_id").alias("exact_chrom_id"),
+                    col("start").alias("exact_start"),
+                    col("end").alias("exact_end"),
+                    col("kind").alias("exact_kind"),
+                    col("length").alias("exact_length"),
+                    col("chrom2_id").alias("exact_chrom2_id"),
+                    col("end2").alias("exact_end2"),
+                    col("seq_hash").alias("exact_seq_hash"),
+                    col("row_key"),
+                    col("vix_count"),
+                    col("vix_set"),
+                ])?;
+
+            exact.clone().show().await?;
+
+            /*
+            let exact = df
+                .clone()
+                .filter(col("vix_count").eq(lit(n as i32)))?
+                .select(vec![
+                    col("chrom_id"),
+                    col("start"),
+                    col("end"),
+                    col("kind"),
+                    col("rows"),
+                    col("vix_set"),
+                ])?;
+
+            let df = df.filter(col("vix_count").not_eq(lit(n as i32)))?;
+
+            let starts = df
+                .clone()
+                .select(vec![
                     col("chrom_id"),
                     col("start"),
                     col("end"),
                     col("kind"),
                     col("length"),
-                    col("chrom2_id"),
-                    col("end2"),
-                    col("seq_hash"),
-                ],
-                vec![
-                    array_agg(col("row_id")).alias("rows"),
-                    count(col("vix")).alias("vix_count"),
-                    bit_or(col("vix")).alias("vix_set"),
-                ],
-            )?;
-            df.clone()
-                //.filter(col("vix_count").eq(lit(n as i32)))?
+                    col("rows"),
+                    col("vix_set"),
+                ])?
                 .sort(vec![
                     col("chrom_id").sort(true, true),
                     col("start").sort(true, true),
-                    col("end").sort(true, true),
-                    col("kind").sort(true, true),
-                    col("length").sort(true, true),
-                    col("chrom2_id").sort(true, true),
-                    col("end2").sort(true, true),
-                    col("seq_hash").sort(true, true),
+                ])?;
+            //.collect()
+            //.await?;
+
+            let lhs = starts
+                .clone()
+                .with_column_renamed("chrom_id", "lhs_chrom_id")?
+                .with_column_renamed("start", "lhs_start")?
+                .with_column_renamed("end", "lhs_end")?
+                .with_column_renamed("kind", "lhs_kind")?
+                .with_column_renamed("length", "lhs_length")?
+                .with_column_renamed("rows", "lhs_rows")?
+                .with_column_renamed("vix_set", "lhs_vix_set")?;
+            let rhs = starts
+                .clone()
+                .with_column_renamed("chrom_id", "rhs_chrom_id")?
+                .with_column_renamed("start", "rhs_start")?
+                .with_column_renamed("end", "rhs_end")?
+                .with_column_renamed("kind", "rhs_kind")?
+                .with_column_renamed("length", "rhs_length")?
+                .with_column_renamed("rows", "rhs_rows")?
+                .with_column_renamed("vix_set", "rhs_vix_set")?;
+
+            let almost_exact = lhs
+                .join(
+                    rhs,
+                    datafusion::common::JoinType::Inner,
+                    &["lhs_chrom_id", "lhs_kind"],
+                    &["rhs_chrom_id", "rhs_kind"],
+                    Some(
+                        col("lhs_start")
+                            .lt_eq(col("rhs_start"))
+                            .and(col("lhs_vix_set").lt(col("rhs_vix_set")))
+                            .and(abs(col("lhs_start") - col("rhs_start")).lt(lit(25)))
+                            .and(abs(col("lhs_end") - col("rhs_end")).lt(lit(25)))
+                            .and((col("lhs_vix_set") & col("rhs_vix_set")).eq(lit(0))),
+                    ),
+                )?
+                .with_column(
+                    "max_length",
+                    case(col("lhs_length").gt_eq(col("rhs_length")))
+                        .when(lit(true), col("lhs_length"))
+                        .when(lit(false), col("rhs_length"))
+                        .end()?,
+                )?
+                .with_column(
+                    "min_length",
+                    case(col("lhs_length").lt_eq(col("rhs_length")))
+                        .when(lit(true), col("lhs_length"))
+                        .when(lit(false), col("rhs_length"))
+                        .end()?,
+                )?
+                .with_column(
+                    "length_ratio",
+                    cast(col("min_length"), DataType::Float64)
+                        / cast(col("max_length"), DataType::Float64),
+                )?
+                .filter(col("length_ratio").gt(lit(0.9)))?
+                .select(vec![
+                    col("lhs_chrom_id").alias("chrom_id"),
+                    col("lhs_start").alias("start"),
+                    col("lhs_end").alias("end"),
+                    col("lhs_kind").alias("kind"),
+                    array_distinct(array_concat(vec![col("lhs_rows"), col("rhs_rows")]))
+                        .alias("rows"),
+                    (col("lhs_vix_set") | col("rhs_vix_set")).alias("vix_set"),
+                ])?;
+
+            let results = almost_exact.collect().await?; //.union(almost_exact)?.collect().await?;
+            let df = ctx.read_batches(results)?;
+
+            let res = df
+                .sort(vec![
+                    col("chrom_id").sort(true, true),
+                    col("start").sort(true, true),
+                    //col("end").sort(true, true),
+                    //col("kind").sort(true, true),
                 ])?
                 .show()
-                .await?;
+                .await;
+            match res {
+                Ok(_) => {}
+                Err(err) => {
+                    log::error!("{}", err.message());
+                },
+            }
+             */
         }
     }
     Ok(())

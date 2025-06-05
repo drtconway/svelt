@@ -11,7 +11,7 @@ use datafusion::arrow::{
     },
 };
 use noodles::vcf::{
-    variant::record::{info::field::Value, AlternateBases, Ids, Record}, Header
+    variant::record::{info::field::Value, AlternateBases, Record}, Header
 };
 
 use crate::{

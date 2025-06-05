@@ -16,6 +16,7 @@ pub enum SveltError {
     MissingChr2(String, usize),
     MissingInfo(String, usize, String),
     MissingType(String, usize),
+    NeardexDuplicate(u32),
 }
 
 impl Display for SveltError {
@@ -71,6 +72,9 @@ impl Display for SveltError {
             }
             SveltError::MissingType(chrom, pos) => {
                 write!(f, "Variant without SVTYPE at {}:{}", chrom, pos)
+            }
+            SveltError::NeardexDuplicate(key) => {
+                write!(f, "Cannot construct Neardex with duplicate key {}", key)
             }
         }
     }
