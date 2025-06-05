@@ -5,7 +5,11 @@ use std::{
 
 use clap::{Parser, Subcommand};
 use datafusion::{
-    arrow::datatypes::DataType,
+    arrow::{
+        array::DictionaryArray,
+        datatypes::{DataType, Schema, UInt8Type},
+    },
+    common::JoinType,
     functions_aggregate::{
         count::count,
         expr_fn::{array_agg, bit_or},
@@ -14,8 +18,8 @@ use datafusion::{
     },
     functions_window::expr_fn::row_number,
     prelude::{
-        DataFrame, SessionContext, abs, array_concat, array_distinct, case, cast, col, concat, lit,
-        make_array, sha256, unnest,
+        DataFrame, SessionContext, abs, array_concat, array_distinct, case, cast, coalesce, col,
+        concat, lit, make_array, sha256, unnest,
     },
 };
 use noodles::vcf::{self, Header};
@@ -99,7 +103,6 @@ async fn main() -> std::io::Result<()> {
                 }
             }
             let orig = acc.unwrap();
-            let orig = orig.with_column("grow", row_number())?;
 
             let exact = orig
                 .clone()
@@ -115,7 +118,7 @@ async fn main() -> std::io::Result<()> {
                         col("seq_hash"),
                     ],
                     vec![
-                        min(col("grow")).alias("row_key"),
+                        min(col("row_id")).alias("row_key"),
                         count(col("vix")).alias("vix_count"),
                         bit_or(col("vix")).alias("vix_set"),
                     ],
@@ -129,14 +132,233 @@ async fn main() -> std::io::Result<()> {
                     col("chrom2_id").alias("exact_chrom2_id"),
                     col("end2").alias("exact_end2"),
                     col("seq_hash").alias("exact_seq_hash"),
-                    col("row_key"),
-                    col("vix_count"),
-                    col("vix_set"),
-                ])?;
+                    col("row_key").alias("exact_row_key"),
+                    col("vix_count").alias("exact_vix_count"),
+                    col("vix_set").alias("exact_vix_set"),
+                ])?
+                .filter(col("exact_vix_count").eq(lit(n as u32)))?;
 
-            exact.clone().show().await?;
+            //orig.clone().show().await?;
+            //exact.clone().show().await?;
+
+            let exact_ins = exact.clone().filter(col("exact_kind").eq(lit("INS")))?;
+            let exact_del = exact.clone().filter(col("exact_kind").eq(lit("DEL")))?;
+            let exact_dup = exact.clone().filter(col("exact_kind").eq(lit("DUP")))?;
+            let exact_inv = exact.clone().filter(col("exact_kind").eq(lit("INV")))?;
+            let exact_bnd = exact.clone().filter(col("exact_kind").eq(lit("BND")))?;
+
+            exact_bnd.clone().show().await?;
+
+            let results = orig
+                .join(
+                    exact_ins,
+                    JoinType::Left,
+                    &["chrom_id", "start", "end", "kind", "length", "seq_hash"],
+                    &[
+                        "exact_chrom_id",
+                        "exact_start",
+                        "exact_end",
+                        "exact_kind",
+                        "exact_length",
+                        "exact_seq_hash",
+                    ],
+                    None,
+                )?
+                .drop_columns(&[
+                    "exact_chrom_id",
+                    "exact_start",
+                    "exact_end",
+                    "exact_kind",
+                    "exact_length",
+                    "exact_chrom2_id",
+                    "exact_end2",
+                    "exact_seq_hash",
+                ])?
+                .with_column_renamed("exact_row_key", "row_key")?
+                .with_column_renamed("exact_vix_count", "vix_count")?
+                .with_column_renamed("exact_vix_set", "vix_set")?
+                .join(
+                    exact_del,
+                    JoinType::Left,
+                    &["chrom_id", "start", "end", "kind", "length"],
+                    &[
+                        "exact_chrom_id",
+                        "exact_start",
+                        "exact_end",
+                        "exact_kind",
+                        "exact_length",
+                    ],
+                    None,
+                )?
+                .drop_columns(&[
+                    "exact_chrom_id",
+                    "exact_start",
+                    "exact_end",
+                    "exact_kind",
+                    "exact_length",
+                    "exact_chrom2_id",
+                    "exact_end2",
+                    "exact_seq_hash",
+                ])?
+                .with_column(
+                    "row_key",
+                    coalesce(vec![col("row_key"), col("exact_row_key")]),
+                )?
+                .with_column(
+                    "vix_count",
+                    coalesce(vec![col("vix_count"), col("exact_vix_count")]),
+                )?
+                .with_column(
+                    "vix_set",
+                    coalesce(vec![col("vix_set"), col("exact_vix_set")]),
+                )?
+                .drop_columns(&["exact_row_key", "exact_vix_count", "exact_vix_set"])?
+                .join(
+                    exact_dup,
+                    JoinType::Left,
+                    &["chrom_id", "start", "end", "kind", "length"],
+                    &[
+                        "exact_chrom_id",
+                        "exact_start",
+                        "exact_end",
+                        "exact_kind",
+                        "exact_length",
+                    ],
+                    None,
+                )?
+                .drop_columns(&[
+                    "exact_chrom_id",
+                    "exact_start",
+                    "exact_end",
+                    "exact_kind",
+                    "exact_length",
+                    "exact_chrom2_id",
+                    "exact_end2",
+                    "exact_seq_hash",
+                ])?
+                .with_column(
+                    "row_key",
+                    coalesce(vec![col("row_key"), col("exact_row_key")]),
+                )?
+                .with_column(
+                    "vix_count",
+                    coalesce(vec![col("vix_count"), col("exact_vix_count")]),
+                )?
+                .with_column(
+                    "vix_set",
+                    coalesce(vec![col("vix_set"), col("exact_vix_set")]),
+                )?
+                .drop_columns(&["exact_row_key", "exact_vix_count", "exact_vix_set"])?
+                .join(
+                    exact_inv,
+                    JoinType::Left,
+                    &["chrom_id", "start", "end", "kind", "length"],
+                    &[
+                        "exact_chrom_id",
+                        "exact_start",
+                        "exact_end",
+                        "exact_kind",
+                        "exact_length",
+                    ],
+                    None,
+                )?
+                .drop_columns(&[
+                    "exact_chrom_id",
+                    "exact_start",
+                    "exact_end",
+                    "exact_kind",
+                    "exact_length",
+                    "exact_chrom2_id",
+                    "exact_end2",
+                    "exact_seq_hash",
+                ])?
+                .with_column(
+                    "row_key",
+                    coalesce(vec![col("row_key"), col("exact_row_key")]),
+                )?
+                .with_column(
+                    "vix_count",
+                    coalesce(vec![col("vix_count"), col("exact_vix_count")]),
+                )?
+                .with_column(
+                    "vix_set",
+                    coalesce(vec![col("vix_set"), col("exact_vix_set")]),
+                )?
+                .drop_columns(&["exact_row_key", "exact_vix_count", "exact_vix_set"])?
+.join(
+                    exact_bnd,
+                    JoinType::Left,
+                    &["chrom_id", "start", "end", "kind", "chrom2_id", "end2"],
+                    &[
+                        "exact_chrom_id",
+                        "exact_start",
+                        "exact_end",
+                        "exact_kind",
+                        "exact_chrom2_id",
+                        "exact_end2"
+                    ],
+                    None,
+                )?
+                .drop_columns(&[
+                    "exact_chrom_id",
+                    "exact_start",
+                    "exact_end",
+                    "exact_kind",
+                    "exact_length",
+                    "exact_chrom2_id",
+                    "exact_end2",
+                    "exact_seq_hash",
+                ])?
+                .with_column(
+                    "row_key",
+                    coalesce(vec![col("row_key"), col("exact_row_key")]),
+                )?
+                .with_column(
+                    "vix_count",
+                    coalesce(vec![col("vix_count"), col("exact_vix_count")]),
+                )?
+                .with_column(
+                    "vix_set",
+                    coalesce(vec![col("vix_set"), col("exact_vix_set")]),
+                )?
+                .drop_columns(&["exact_row_key", "exact_vix_count", "exact_vix_set"])?                ;
+
+            results
+                .clone()
+                .sort_by(vec![col("chrom_id"), col("start"), col("end"), col("row_id")])?
+                .show()
+                .await?;
 
             /*
+
+
+            .join(
+                exact_del,
+                JoinType::Left,
+                &["chrom_id", "start", "end", "kind", "length"],
+                &[
+                    "exact_chrom_id",
+                    "exact_start",
+                    "exact_end",
+                    "exact_kind",
+                    "exact_length",
+                ],
+                None,
+            )?
+            .select(vec![
+                col("chrom_id"),
+                col("start"),
+                col("end"),
+                col("kind"),
+                col("length"),
+                col("chrom2_id"),
+                col("end2"),
+                col("seq_hash"),
+                coalesce(vec![col("row_key"), col("exact_row_key")]).alias("row_key"),
+                col("vix_count"),
+                col("vix_set"),
+            ])?
+
             let exact = df
                 .clone()
                 .filter(col("vix_count").eq(lit(n as i32)))?
