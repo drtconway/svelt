@@ -1,6 +1,9 @@
+pub mod almost;
 pub mod breakends;
 pub mod chroms;
+pub mod disjoint_set;
 pub mod errors;
+pub mod exact;
 pub mod keys;
 pub mod nearest;
 pub mod tables;
