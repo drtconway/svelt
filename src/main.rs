@@ -3,15 +3,14 @@ use std::{
     rc::Rc,
 };
 
+use autocompress::autodetect_create;
 use clap::{Parser, Subcommand};
-use datafusion::
-    prelude::{
-        DataFrame, SessionContext, col,
-        lit,
-    }
-;
-use noodles::vcf::{self, Header};
-use svelt::{almost::find_almost_exact, chroms::ChromSet, exact::find_exact, tables::load_vcf_core, vcf_reader::VcfReader};
+use datafusion::prelude::{DataFrame, SessionContext, col, lit};
+use noodles::vcf::{self, Header, header::SampleNames};
+use svelt::{
+    almost::find_almost_exact, chroms::ChromSet, exact::find_exact, tables::load_vcf_core,
+    vcf_reader::VcfReader,
+};
 
 /// Structuaral Variant (SV) VCF merging
 #[derive(Debug, Parser)]
@@ -98,15 +97,44 @@ async fn main() -> std::io::Result<()> {
 
             if false {
                 results
-                .clone()
+                    .clone()
+                    .sort_by(vec![
+                        col("chrom_id"),
+                        col("start"),
+                        col("end"),
+                        col("row_id"),
+                    ])?
+                    .show()
+                    .await?;
+            }
+
+            let table = results
                 .sort_by(vec![
                     col("chrom_id"),
                     col("start"),
                     col("end"),
-                    col("row_id"),
+                    col("row_key"),
                 ])?
-                .show()
+                .collect()
                 .await?;
+
+            let mut sample_names: Vec<String> = Vec::new();
+            for h in readers.iter().map(|r| &r.header) {
+                for s in h.sample_names() {
+                    sample_names.push(s.clone());
+                }
+            }
+
+            let mut header = readers[0].header.clone();
+            *header.sample_names_mut() =
+                SampleNames::from_iter(sample_names.iter().map(|s| s.clone()));
+
+            let writer = autodetect_create(out, autocompress::CompressionLevel::Default)?;
+            let mut writer = vcf::io::Writer::new(writer);
+            writer.write_header(&header)?;
+
+            for recs in table.into_iter() {
+                
             }
         }
     }
