@@ -9,7 +9,6 @@ use datafusion::{
         array::{Int64Array, PrimitiveBuilder, RecordBatch},
         datatypes::{DataType, Field, Schema, UInt32Type},
     },
-    common::HashSet,
     functions_aggregate::count::count,
     prelude::{DataFrame, Expr, SessionContext, abs, case, cast, coalesce, col, lit},
 };
@@ -241,7 +240,7 @@ pub async fn find_almost_exact_bnd(
         .read_batch(resolution)
         .map_err(|e| Error::new(ErrorKind::Other, e))?;
 
-    if true {
+    if false {
         resolution.clone().sort_by(vec![col("new_row_key")])?.show().await?;
     }
 

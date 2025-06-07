@@ -19,6 +19,7 @@ pub fn construct_record(
     vix_samples: &Vec<usize>,
     force_alt_tags: bool,
 ) -> std::io::Result<RecordBuf> {
+    let _ = header;
     let mut the_record = None;
     for vix in 0..recs.len() {
         if let Some(hnr) = &recs[vix] {

@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     io::{BufRead, Error, ErrorKind},
     rc::Rc,
     u32,
@@ -154,10 +155,9 @@ async fn main() -> std::io::Result<()> {
             let mut writer = vcf::io::Writer::new(writer);
             writer.write_header(&header)?;
 
+            let mut current_chrom = String::new();
             let mut current_row_key = u32::MAX;
             let mut current_row: Vec<Option<u32>> = (0..n).into_iter().map(|_| None).collect();
-            let mut merge_frequency_counts: Vec<usize> =
-                (0..n + 1).into_iter().map(|_| 0).collect();
 
             for recs in table.into_iter() {
                 for field in recs.schema_ref().fields().iter() {
@@ -190,15 +190,18 @@ async fn main() -> std::io::Result<()> {
                             if let Some(rn) = current_row[vix] {
                                 m += 1;
                                 is_empty = false;
-                                let hnr = seekers[vix].take(rn).unwrap();
+                                let hnr = seekers[vix].take(rn)?.unwrap();
                                 recs[vix] = Some(hnr)
                             }
                         }
-                        merge_frequency_counts[m] += 1;
                         if !is_empty {
                             let rec =
                                 construct_record(&header, recs, &vix_samples, force_alt_tags)?;
                             writer.write_variant_record(&header, &rec)?;
+                            if rec.reference_sequence_name() != &current_chrom {
+                                current_chrom = String::from(rec.reference_sequence_name());
+                                log::info!("scanning {}", current_chrom);
+                            }
                         }
 
                         current_row = (0..n).into_iter().map(|_| None).collect();
@@ -217,16 +220,14 @@ async fn main() -> std::io::Result<()> {
                 if let Some(rn) = current_row[vix] {
                     m += 1;
                     is_empty = false;
-                    let hnr = seekers[vix].take(rn).unwrap();
+                    let hnr = seekers[vix].take(rn)?.unwrap();
                     recs[vix] = Some(hnr)
                 }
             }
-            merge_frequency_counts[m] += 1;
             if !is_empty {
                 let rec = construct_record(&header, recs, &vix_samples, force_alt_tags)?;
                 writer.write_variant_record(&header, &rec)?;
             }
-            log::info!("merge frequencies: {:?}", merge_frequency_counts);
         }
     }
     Ok(())
