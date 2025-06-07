@@ -10,7 +10,8 @@ use datafusion::{
         datatypes::{DataType, Field, Schema, UInt32Type},
     },
     common::HashSet,
-    prelude::{abs, case, cast, coalesce, col, lit, DataFrame, Expr, SessionContext},
+    functions_aggregate::count::count,
+    prelude::{DataFrame, Expr, SessionContext, abs, case, cast, coalesce, col, lit},
 };
 
 use crate::disjoint_set::DisjointSet;
@@ -123,20 +124,41 @@ pub async fn find_almost_exact_non_bnd(
         resolution.clone().show().await?;
     }
 
-    let tbl = tbl.join(
-        resolution,
-        datafusion::common::JoinType::Left,
-        &["row_key"],
-        &["res_row_key"],
-        None,
-    )?
-    .with_column("row_key", coalesce(vec![col("res_rhs_key"), col("row_key")]))?
-    .with_column("vix_count", coalesce(vec![col("res_vix_count"), col("vix_count")]))?
-    .with_column("vix_set", coalesce(vec![col("res_vix_set"), col("vix_set")]))?
-    .drop_columns(&["res_row_key", "res_rhs_key", "res_vix_count", "res_vix_set"])?
-    ;
+    if false {
+        tbl.clone()
+            .aggregate(
+                vec![col("row_id")],
+                vec![count(col("row_key")).alias("count")],
+            )?
+            .filter(col("count").gt(lit(1)))?
+            .sort_by(vec![col("row_id")])?
+            .show()
+            .await?;
+    }
 
-    if true {
+    let tbl = tbl
+        .join(
+            resolution,
+            datafusion::common::JoinType::Left,
+            &["row_id"],
+            &["orig_row_id"],
+            None,
+        )?
+        .with_column(
+            "row_key",
+            coalesce(vec![col("new_row_key"), col("row_key")]),
+        )?
+        .with_column(
+            "vix_count",
+            coalesce(vec![col("new_vix_count"), col("vix_count")]),
+        )?
+        .with_column(
+            "vix_set",
+            coalesce(vec![col("new_vix_set"), col("vix_set")]),
+        )?
+        .drop_columns(&["orig_row_id", "new_row_key", "new_vix_count", "new_vix_set"])?;
+
+    if false {
         tbl.clone()
             .sort_by(vec![
                 col("chrom_id"),
@@ -169,12 +191,18 @@ fn pmax(lhs: Expr, rhs: Expr) -> datafusion::common::Result<Expr> {
 async fn resolve_groups(batch: Vec<RecordBatch>) -> std::io::Result<RecordBatch> {
     let mut uf: DisjointSet<u32> = DisjointSet::new();
     let mut vix_sets: HashMap<u32, u32> = HashMap::new();
-    let mut keys = HashSet::new();
+    let mut row_ids = HashMap::new();
 
     for recs in batch.into_iter() {
         for field in recs.schema_ref().fields().iter() {
             log::debug!("field: {:?}", field);
         }
+        let lhs_row_id = recs
+            .column_by_name("lhs_row_id")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
         let lhs_row_key = recs
             .column_by_name("lhs_row_key")
             .unwrap()
@@ -183,6 +211,12 @@ async fn resolve_groups(batch: Vec<RecordBatch>) -> std::io::Result<RecordBatch>
             .unwrap();
         let lhs_vix_set = recs
             .column_by_name("lhs_vix_set")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        let rhs_row_id = recs
+            .column_by_name("rhs_row_id")
             .unwrap()
             .as_any()
             .downcast_ref::<Int64Array>()
@@ -201,8 +235,10 @@ async fn resolve_groups(batch: Vec<RecordBatch>) -> std::io::Result<RecordBatch>
             .unwrap();
         let z = lhs_row_key.len();
         for i in 0..z {
+            let ln = lhs_row_id.value(i) as u32;
             let lk = lhs_row_key.value(i) as u32;
             let ls = lhs_vix_set.value(i) as u32;
+            let rn = rhs_row_id.value(i) as u32;
             let rk = rhs_row_key.value(i) as u32;
             let rs = rhs_vix_set.value(i) as u32;
 
@@ -220,8 +256,8 @@ async fn resolve_groups(batch: Vec<RecordBatch>) -> std::io::Result<RecordBatch>
                 continue;
             }
 
-            keys.insert(lk);
-            keys.insert(rk);
+            row_ids.insert(ln, lk);
+            row_ids.insert(rn, rk);
 
             let c = uf.union(a, b);
             let cv = av | bv;
@@ -234,37 +270,37 @@ async fn resolve_groups(batch: Vec<RecordBatch>) -> std::io::Result<RecordBatch>
         }
     }
 
-    let mut row_key_builder = PrimitiveBuilder::<UInt32Type>::new();
-    let mut rhs_key_builder = PrimitiveBuilder::<UInt32Type>::new();
+    let mut orig_row_id_builder = PrimitiveBuilder::<UInt32Type>::new();
+    let mut new_row_key_builder = PrimitiveBuilder::<UInt32Type>::new();
     let mut vix_count_builder = PrimitiveBuilder::<UInt32Type>::new();
     let mut vix_set_builder = PrimitiveBuilder::<UInt32Type>::new();
 
-    for x in keys.into_iter() {
-        let a = uf.find(x);
+    for x in row_ids.into_iter() {
+        let a = uf.find(x.1);
         let s = *vix_sets.get(&a).unwrap();
-        row_key_builder.append_value(a);
-        rhs_key_builder.append_value(x);
+        orig_row_id_builder.append_value(x.0);
+        new_row_key_builder.append_value(a);
         vix_count_builder.append_value(s.count_ones());
         vix_set_builder.append_value(s);
     }
 
-    let row_key_array = row_key_builder.finish();
-    let rhs_key_array = rhs_key_builder.finish();
+    let orig_row_id_array = orig_row_id_builder.finish();
+    let new_row_key_array = new_row_key_builder.finish();
     let vix_count_array = vix_count_builder.finish();
     let vix_set_array = vix_set_builder.finish();
 
     let schema = Arc::new(Schema::new(vec![
-        Field::new("res_rhs_key", DataType::UInt32, false),
-        Field::new("res_row_key", DataType::UInt32, false),
-        Field::new("res_vix_count", DataType::UInt32, false),
-        Field::new("res_vix_set", DataType::UInt32, false),
+        Field::new("orig_row_id", DataType::UInt32, false),
+        Field::new("new_row_key", DataType::UInt32, false),
+        Field::new("new_vix_count", DataType::UInt32, false),
+        Field::new("new_vix_set", DataType::UInt32, false),
     ]));
 
     let recs = RecordBatch::try_new(
         schema,
         vec![
-            Arc::new(rhs_key_array),
-            Arc::new(row_key_array),
+            Arc::new(orig_row_id_array),
+            Arc::new(new_row_key_array),
             Arc::new(vix_count_array),
             Arc::new(vix_set_array),
         ],

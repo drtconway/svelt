@@ -1,15 +1,19 @@
 use std::{
     io::{BufRead, Error, ErrorKind},
     rc::Rc,
+    u32,
 };
 
 use autocompress::autodetect_create;
 use clap::{Parser, Subcommand};
-use datafusion::prelude::{DataFrame, SessionContext, col, lit};
-use noodles::vcf::{self, Header, header::SampleNames};
+use datafusion::{
+    arrow::array::Int64Array,
+    prelude::{DataFrame, SessionContext, col, lit},
+};
+use noodles::vcf::{self, Header, Record, header::SampleNames, variant::io::Write};
 use svelt::{
-    almost::find_almost_exact, chroms::ChromSet, exact::find_exact, tables::load_vcf_core,
-    vcf_reader::VcfReader,
+    almost::find_almost_exact, chroms::ChromSet, construct::construct_record, exact::find_exact,
+    record_seeker::RecordSeeker, row_key::RowKey, tables::load_vcf_core, vcf_reader::VcfReader,
 };
 
 /// Structuaral Variant (SV) VCF merging
@@ -26,6 +30,10 @@ enum Commands {
     /// Apply annotations from one VCF to another
     #[command(arg_required_else_help = true)]
     Merge {
+        /// Force ALTs to be symbolic
+        #[arg(short, long)]
+        force_alt_tags: bool,
+
         /// The output filename
         #[arg(short, long)]
         out: String,
@@ -58,7 +66,11 @@ async fn main() -> std::io::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Merge { out, vcf } => {
+        Commands::Merge {
+            out,
+            vcf,
+            force_alt_tags,
+        } => {
             let chroms = load_chroms(&vcf[0])?;
             let chroms = Rc::new(chroms);
             let mut readers = Vec::new();
@@ -119,23 +131,102 @@ async fn main() -> std::io::Result<()> {
                 .await?;
 
             let mut sample_names: Vec<String> = Vec::new();
+            let mut vix_samples = Vec::new();
+
             for h in readers.iter().map(|r| &r.header) {
                 for s in h.sample_names() {
                     sample_names.push(s.clone());
                 }
+                vix_samples.push(h.sample_names().len());
             }
 
             let mut header = readers[0].header.clone();
             *header.sample_names_mut() =
                 SampleNames::from_iter(sample_names.iter().map(|s| s.clone()));
 
+            let mut seekers = Vec::new();
+            for path in vcf.iter() {
+                let seeker = RecordSeeker::new(path, chroms.clone())?;
+                seekers.push(seeker);
+            }
+
             let writer = autodetect_create(out, autocompress::CompressionLevel::Default)?;
             let mut writer = vcf::io::Writer::new(writer);
             writer.write_header(&header)?;
 
+            let mut current_row_key = u32::MAX;
+            let mut current_row: Vec<Option<u32>> = (0..n).into_iter().map(|_| None).collect();
+            let mut merge_frequency_counts: Vec<usize> =
+                (0..n + 1).into_iter().map(|_| 0).collect();
+
             for recs in table.into_iter() {
-                
+                for field in recs.schema_ref().fields().iter() {
+                    log::debug!("field: {:?}", field);
+                }
+                let row_ids = recs
+                    .column_by_name("row_id")
+                    .unwrap()
+                    .as_any()
+                    .downcast_ref::<Int64Array>()
+                    .unwrap();
+                let row_keys = recs
+                    .column_by_name("row_key")
+                    .unwrap()
+                    .as_any()
+                    .downcast_ref::<Int64Array>()
+                    .unwrap();
+
+                for i in 0..row_ids.len() {
+                    let row_id = row_ids.value(i) as u32;
+                    let row_key = row_keys.value(i) as u32;
+
+                    if row_key != current_row_key {
+                        log::debug!("flushing group: {} {:?}", current_row_key, current_row);
+                        let mut is_empty = true;
+                        let mut recs: Vec<Option<(Rc<Header>, Record)>> =
+                            (0..n).into_iter().map(|_| None).collect();
+                        let mut m = 0;
+                        for vix in 0..n {
+                            if let Some(rn) = current_row[vix] {
+                                m += 1;
+                                is_empty = false;
+                                let hnr = seekers[vix].take(rn).unwrap();
+                                recs[vix] = Some(hnr)
+                            }
+                        }
+                        merge_frequency_counts[m] += 1;
+                        if !is_empty {
+                            let rec =
+                                construct_record(&header, recs, &vix_samples, force_alt_tags)?;
+                            writer.write_variant_record(&header, &rec)?;
+                        }
+
+                        current_row = (0..n).into_iter().map(|_| None).collect();
+                        current_row_key = row_key;
+                    }
+                    let (vix, rn) = RowKey::decode(row_id);
+                    current_row[vix as usize] = Some(rn);
+                }
             }
+            log::debug!("flushing group: {} {:?}", current_row_key, current_row);
+            let mut is_empty = true;
+            let mut recs: Vec<Option<(Rc<Header>, Record)>> =
+                (0..n).into_iter().map(|_| None).collect();
+            let mut m = 0;
+            for vix in 0..n {
+                if let Some(rn) = current_row[vix] {
+                    m += 1;
+                    is_empty = false;
+                    let hnr = seekers[vix].take(rn).unwrap();
+                    recs[vix] = Some(hnr)
+                }
+            }
+            merge_frequency_counts[m] += 1;
+            if !is_empty {
+                let rec = construct_record(&header, recs, &vix_samples, force_alt_tags)?;
+                writer.write_variant_record(&header, &rec)?;
+            }
+            log::info!("merge frequencies: {:?}", merge_frequency_counts);
         }
     }
     Ok(())

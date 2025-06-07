@@ -31,6 +31,15 @@ impl VcfReader {
         })
     }
 
+    pub fn rewind(&mut self) -> std::io::Result<()> {
+        let reader = autocompress::autodetect_open(&self.path)?;
+        let mut reader: vcf::io::Reader<Box<dyn BufRead>> =
+            vcf::io::reader::Builder::default().build_from_reader(reader)?;
+        let _header = reader.read_header()?;
+        self.reader = reader;
+        Ok(())
+    }
+
     pub fn info_as_str(rec: &Record, header: &Header, name: &str) -> std::io::Result<Option<String>> {
         if let Some(field) = rec.info().get(header, name) {
             let field = field?;
