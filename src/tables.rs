@@ -122,7 +122,8 @@ pub fn load_vcf_core(reader: &mut VcfReader) -> std::io::Result<RecordBatch> {
                 if is_seq(alt) {
                     Ok(Some(digest(&alt[1..]) as i64))
                 } else {
-                    Ok(None)
+                    // hash the tag
+                    Ok(Some(digest(alt) as i64))
                 }
             } else {
                 Ok(None)

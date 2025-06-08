@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     io::{BufRead, Error, ErrorKind},
     rc::Rc,
     u32,
@@ -8,8 +7,10 @@ use std::{
 use autocompress::autodetect_create;
 use clap::{Parser, Subcommand};
 use datafusion::{
-    arrow::array::Int64Array,
-    prelude::{DataFrame, SessionContext, col, lit},
+    arrow::{array::Int64Array, datatypes::DataType},
+    config::CsvOptions,
+    dataframe::DataFrameWriteOptions,
+    prelude::{cast, col, lit, to_hex, DataFrame, SessionContext},
 };
 use noodles::vcf::{self, Header, Record, header::SampleNames, variant::io::Write};
 use svelt::{
@@ -31,6 +32,10 @@ enum Commands {
     /// Apply annotations from one VCF to another
     #[command(arg_required_else_help = true)]
     Merge {
+        /// Write out the final merge table
+        #[arg(long)]
+        write_merge_table: Option<String>,
+
         /// Force ALTs to be symbolic
         #[arg(short, long)]
         force_alt_tags: bool,
@@ -71,6 +76,7 @@ async fn main() -> std::io::Result<()> {
             out,
             vcf,
             force_alt_tags,
+            write_merge_table,
         } => {
             let chroms = load_chroms(&vcf[0])?;
             let chroms = Rc::new(chroms);
@@ -103,21 +109,31 @@ async fn main() -> std::io::Result<()> {
                 }
             }
             let orig = acc.unwrap();
+            let orig = orig
+                .with_column("row_key", col("row_id"))?
+                .with_column("vix_count", lit(1))?
+                .with_column("vix_set", cast(col("vix"), DataType::Int64))?;
 
-            let results = find_exact(orig, n as u32).await?;
+            let results = find_exact(&ctx, orig, n as u32).await?;
 
             let results = find_almost_exact(&ctx, results, n as u32).await?;
 
-            if false {
+            if let Some(table_out) = &write_merge_table {
+                let opts = DataFrameWriteOptions::default();
+                let csv_opts = CsvOptions::default().with_delimiter(b'\t');
+                let csv_opts = Some(csv_opts);
                 results
                     .clone()
+                    .with_column("seq_hash", to_hex(col("seq_hash")))?
                     .sort_by(vec![
                         col("chrom_id"),
                         col("start"),
                         col("end"),
+                        col("row_key"),
                         col("row_id"),
                     ])?
-                    .show()
+                    .drop_columns(&["row_num", "chrom_id", "chrom2_id"])?
+                    .write_csv(table_out, opts, csv_opts)
                     .await?;
             }
 
@@ -185,10 +201,8 @@ async fn main() -> std::io::Result<()> {
                         let mut is_empty = true;
                         let mut recs: Vec<Option<(Rc<Header>, Record)>> =
                             (0..n).into_iter().map(|_| None).collect();
-                        let mut m = 0;
                         for vix in 0..n {
                             if let Some(rn) = current_row[vix] {
-                                m += 1;
                                 is_empty = false;
                                 let hnr = seekers[vix].take(rn)?.unwrap();
                                 recs[vix] = Some(hnr)
@@ -200,7 +214,7 @@ async fn main() -> std::io::Result<()> {
                             writer.write_variant_record(&header, &rec)?;
                             if rec.reference_sequence_name() != &current_chrom {
                                 current_chrom = String::from(rec.reference_sequence_name());
-                                log::info!("scanning {}", current_chrom);
+                                log::info!("writing variants for {}", current_chrom);
                             }
                         }
 
@@ -215,10 +229,8 @@ async fn main() -> std::io::Result<()> {
             let mut is_empty = true;
             let mut recs: Vec<Option<(Rc<Header>, Record)>> =
                 (0..n).into_iter().map(|_| None).collect();
-            let mut m = 0;
             for vix in 0..n {
                 if let Some(rn) = current_row[vix] {
-                    m += 1;
                     is_empty = false;
                     let hnr = seekers[vix].take(rn)?.unwrap();
                     recs[vix] = Some(hnr)
