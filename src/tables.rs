@@ -7,7 +7,7 @@ use blake2::{Blake2b512, Digest};
 use datafusion::arrow::{
     array::{PrimitiveBuilder, RecordBatch, StringDictionaryBuilder},
     datatypes::{
-        DataType, Field, Int32Type, Schema, UInt8Type, UInt16Type, UInt32Type, UInt64Type,
+        DataType, Field, Int32Type, Int64Type, Schema, UInt16Type, UInt32Type, UInt8Type
     },
 };
 use noodles::vcf::{
@@ -33,7 +33,7 @@ pub fn vcf_core_schema() -> Arc<Schema> {
         Field::new("chrom2_id", DataType::UInt16, true),
         Field::new_dictionary("chrom2", DataType::UInt16, DataType::Utf8, true),
         Field::new("end2", DataType::UInt32, true),
-        Field::new("seq_hash", DataType::UInt64, true),
+        Field::new("seq_hash", DataType::Int64, true),
     ]))
 }
 
@@ -51,7 +51,7 @@ pub fn load_vcf_core(reader: &mut VcfReader) -> std::io::Result<RecordBatch> {
     let mut chrom2_id_builder = PrimitiveBuilder::<UInt16Type>::new();
     let mut chrom2_builder = StringDictionaryBuilder::<UInt16Type>::new();
     let mut end2_builder = PrimitiveBuilder::<UInt32Type>::new();
-    let mut seq_hash_builder = PrimitiveBuilder::<UInt64Type>::new();
+    let mut seq_hash_builder = PrimitiveBuilder::<Int64Type>::new();
 
     for (rn, rec) in reader.reader.records().enumerate() {
         let rec = rec?;
@@ -120,7 +120,7 @@ pub fn load_vcf_core(reader: &mut VcfReader) -> std::io::Result<RecordBatch> {
             if let Some(alt) = rec.alternate_bases().iter().next() {
                 let alt = alt?;
                 if is_seq(alt) {
-                    Ok(Some(digest(&alt[1..])))
+                    Ok(Some(digest(&alt[1..]) as i64))
                 } else {
                     Ok(None)
                 }
@@ -191,7 +191,7 @@ pub fn digest(seq: &str) -> u64 {
     hasher.update(seq.as_bytes());
     let dig = hasher.finalize();
     let mut h = 0;
-    for i in 0..8 {
+    for i in 0..7 {
         h = (h << 8) | (dig[i] as u64);
     }
     h
