@@ -200,7 +200,7 @@ pub async fn find_exact_bnd(
             col("rhs_row_key").sort(true, false),
         ])?;
 
-    if true {
+    if false {
         exact.clone().show().await?;
     }
 
