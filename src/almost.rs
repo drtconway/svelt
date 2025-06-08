@@ -2,6 +2,7 @@ use std::io::{Error, ErrorKind};
 
 use datafusion::{
     arrow::datatypes::DataType,
+    common::JoinType,
     functions_aggregate::count::count,
     prelude::{DataFrame, SessionContext, abs, cast, col, lit},
 };
@@ -64,7 +65,7 @@ pub async fn find_almost_exact_non_bnd(
     let almost_exact = lhs
         .join(
             rhs,
-            datafusion::common::JoinType::Inner,
+            JoinType::Inner,
             &["lhs_chrom_id", "lhs_kind"],
             &["rhs_chrom_id", "rhs_kind"],
             Some(
@@ -179,7 +180,7 @@ pub async fn find_almost_exact_bnd(
     let almost_exact = lhs
         .join(
             rhs,
-            datafusion::common::JoinType::Inner,
+            JoinType::Inner,
             &["lhs_chrom_id", "lhs_chrom2_id"],
             &["rhs_chrom_id", "rhs_chrom2_id"],
             Some(
