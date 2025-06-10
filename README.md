@@ -44,6 +44,17 @@ cargo build --release
    to be the same on both, chrom2 to be the same on both, end to be
    within 25bp, and end2 to be within 25bp.
 
+The use of a window of 25bp is not arbitrary. Many SVs are mediated by
+mobile element sequences which have short repeat sequences at the end
+which are often duplicated in the SV formation process (TSDs in the literature -
+terminal sequence duplications). It is common for SVs to be called on
+either end of the TSD in a manner that often depends on the data itself.
+Accordingly, most times when SVs are called slightly differently, it is
+within the window of the TSD length (7-22bp).
+
+The sequence length ratio of 0.9 is chosen as a proxy for constraining the
+sequence involved to being highly homologous.
+
 ## TODO
 
 ## Output Generation
@@ -53,6 +64,10 @@ cargo build --release
 - QUAL is taken from the left-most variant. It should probably use the max for
   the non-null variants
 - FILTERS is taken from the left-most variant. It should probably be the union.
+- It would be nice to generate INFO tags documenting which rule was used to merge
+  the variants.
+- It would be nice to generate INFO tags containing the relevant sequence for
+  INS/DUP/INV/DEL variants, where this is known.
 
 ### Additional Merging Rules
 
@@ -60,3 +75,6 @@ cargo build --release
   allowed more latitude (e.g. a couple of hundred bp).
 - For BNDs, if the *here* ends are not close, but the *there* ends are, maybe
   we should flip the representation, and merge the flipped representation.
+- Sometimes a DUP may be called as an INS because insufficient homology was
+  detected, however DUPs at the same location might be considered a prior to
+  promote the INS to a DUP, and merge.
