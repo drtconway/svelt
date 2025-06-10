@@ -56,15 +56,18 @@ within the window of the TSD length (7-22bp).
 The sequence length ratio of 0.9 is chosen as a proxy for constraining the
 sequence involved to being highly homologous.
 
+## Output Details
+
+- The QUAL field is taken as the maximum score across the merged records.
+- The FILTER column is taken as the union of the FILTER values across the
+  merged recrods.
+
 ## TODO
 
 ## Output Generation
 
 - Currently the INFO column is naively populated from the left-most INFO. For
   standard INFO fields, we should consider merging.
-- QUAL is taken from the left-most variant. It should probably use the max for
-  the non-null variants
-- FILTERS is taken from the left-most variant. It should probably be the union.
 - It would be nice to generate INFO tags documenting which rule was used to merge
   the variants.
 - It would be nice to generate INFO tags containing the relevant sequence for

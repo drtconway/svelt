@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use noodles::vcf;
@@ -24,6 +25,7 @@ pub fn construct_record(
     for vix in 0..recs.len() {
         if let Some(hnr) = &recs[vix] {
             the_record = Some(hnr);
+            break;
         }
     }
     let (the_header, the_record) = the_record.unwrap();
@@ -38,18 +40,29 @@ pub fn construct_record(
 
     let (reference_bases, alternate_bases) = make_ref_and_alt(&the_record, force_alt_tags)?;
 
-    let quality_score = if let Some(quality_score) = the_record.quality_score() {
-        let quality_score = quality_score?;
-        quality_score
-    } else {
-        0.0
-    };
-
-    let mut filters = Vec::new();
-    for filter in the_record.filters().iter(&the_header) {
-        let filter = filter?;
-        filters.push(String::from(filter));
+    let mut quality_score: f32 = 0.0;
+    for vix in 0..recs.len() {
+        if let Some(hnr) = &recs[vix] {
+            if let Some(this_quality_score) = hnr.1.quality_score() {
+                let this_quality_score = this_quality_score?;
+                if this_quality_score > quality_score {
+                    quality_score = this_quality_score;
+                }
+            }
+        }
     }
+
+    let mut filters = HashSet::new();
+    for vix in 0..recs.len() {
+        if let Some(hnr) = &recs[vix] {
+            for filter in hnr.1.filters().iter(hnr.0.as_ref()) {
+            let filter = filter?;
+            filters.insert(String::from(filter));
+            }
+        }
+    }
+    let mut filters: Vec<String> = filters.into_iter().collect();
+    filters.sort();
     let filters = Filters::from_iter(filters.into_iter());
 
     let mut info = Vec::new();
@@ -114,7 +127,10 @@ pub fn construct_record(
     Ok(res)
 }
 
-fn make_ref_and_alt(rec: &Record, force_alt_tags: bool) -> std::io::Result<(String, AlternateBases)> {
+fn make_ref_and_alt(
+    rec: &Record,
+    force_alt_tags: bool,
+) -> std::io::Result<(String, AlternateBases)> {
     let mut reference_bases = String::from(rec.reference_bases());
 
     let mut alternate_bases = Vec::new();
@@ -136,7 +152,6 @@ fn make_ref_and_alt(rec: &Record, force_alt_tags: bool) -> std::io::Result<(Stri
     let alterate_bases = AlternateBases::from(alternate_bases);
 
     Ok((reference_bases, alterate_bases))
-
 }
 
 fn make_info_value(
