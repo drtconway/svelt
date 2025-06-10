@@ -24,6 +24,7 @@ and rigorous specification conformance.
 ## Quick Start
 
 For the impatient:
+
 ```bash
 git clone https://github.com/drtconway/svelt.git
 cd svelt
