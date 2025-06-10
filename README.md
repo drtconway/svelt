@@ -30,3 +30,33 @@ cd svelt
 cargo build --release
 ./target/release/svelt merge --out output.vcf child.vcf.gz parent1.vcf.gz parent2.vcf.gz
 ```
+
+## Merging Rules
+
+1. If two variants are the same, merge them. For non-BND variants, this
+   entails the chrom, start, end, length and hash of the ALT allele to
+   be the same. For BND variants, the chrom, end, chrom2, and end2 must
+   be the same (chrom2 and end2 are derived from the ALT tag).
+2. If two variants are almost the same, merge them. For non-BND variants,
+   of the same type, on the same chromosome, if the starts are within 25bp
+   and the ends are within 25bp, we compute the length ratio (shorter/longer),
+   and require that to be > 0.9. For BND variants, we require chrom
+   to be the same on both, chrom2 to be the same on both, end to be
+   within 25bp, and end2 to be within 25bp.
+
+## TODO
+
+## Output Generation
+
+- Currently the INFO column is naively populated from the left-most INFO. For
+  standard INFO fields, we should consider merging.
+- QUAL is taken from the left-most variant. It should probably use the max for
+  the non-null variants
+- FILTERS is taken from the left-most variant. It should probably be the union.
+
+### Additional Merging Rules
+
+- For BNDs, if the *here* end is the same or close, the *there* end might be
+  allowed more latitude (e.g. a couple of hundred bp).
+- For BNDs, if the *here* ends are not close, but the *there* ends are, maybe
+  we should flip the representation, and merge the flipped representation.
