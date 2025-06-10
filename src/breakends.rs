@@ -1,8 +1,9 @@
+use noodles::{core::Position, fasta::Repository};
 use regex::Regex;
 
 use crate::errors::SveltError;
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 pub enum BreakEndSide {
     Before,
     After,
@@ -38,4 +39,75 @@ pub fn parse_breakend(
         }
     }
     Err(SveltError::BadBreakEnd(String::from(alt)))
+}
+
+pub struct BreakEnd {
+    chrom: String,
+    end: usize,
+    side: BreakEndSide,
+    chrom2: String,
+    end2: usize,
+    side2: BreakEndSide,
+}
+
+impl BreakEnd {
+    pub fn new(chrom: &str, end: usize, alt: &str) -> std::result::Result<BreakEnd, SveltError> {
+        let (chrom2, end2, side, side2) = parse_breakend(alt)?;
+        Ok(BreakEnd {
+            chrom: String::from(chrom),
+            end,
+            side,
+            chrom2,
+            end2,
+            side2,
+        })
+    }
+
+    pub fn flip(&self) -> BreakEnd {
+        let BreakEnd {
+            chrom,
+            end,
+            side,
+            chrom2,
+            end2,
+            side2,
+        } = self;
+        BreakEnd {
+            chrom: chrom2.clone(),
+            end: *end2,
+            side: *side2,
+            chrom2: chrom.clone(),
+            end2: *end,
+            side2: *side,
+        }
+    }
+
+    pub fn format(&self, repo: Repository) -> std::io::Result<(String, usize, String)> {
+        let BreakEnd {
+            chrom,
+            end,
+            side,
+            chrom2,
+            end2,
+            side2,
+        } = self;
+        let pos = Position::try_from(*end).unwrap();
+        let seq = repo.get(chrom.as_ref()).unwrap()?;
+        let b: &u8 = seq.get(pos).unwrap();
+        let alt = match (side, side2) {
+            (BreakEndSide::Before, BreakEndSide::Before) => {
+            format!("]{}:{}]{}", chrom2, end2, b)
+            }
+            (BreakEndSide::Before, BreakEndSide::After) => {
+                format!("[{}:{}[{}", chrom2, end2, b)
+            },
+            (BreakEndSide::After, BreakEndSide::Before) => {
+                format!("{}]{}:{}]", b, chrom2, end2)
+            },
+            (BreakEndSide::After, BreakEndSide::After) => {
+                format!("{}[{}:{}[", b, chrom2, end2)
+            },
+        };
+        Ok((chrom.clone(), *end, alt))
+    }
 }

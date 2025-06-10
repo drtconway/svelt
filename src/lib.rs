@@ -1,4 +1,5 @@
 pub mod almost;
+pub mod backward;
 pub mod breakends;
 pub mod chroms;
 pub mod construct;
@@ -8,6 +9,7 @@ pub mod exact;
 pub mod expressions;
 pub mod keys;
 pub mod nearest;
+pub mod options;
 pub mod record_seeker;
 pub mod resolve;
 pub mod row_key;

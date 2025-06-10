@@ -10,12 +10,14 @@ use datafusion::{
     arrow::{array::Int64Array, datatypes::DataType},
     config::CsvOptions,
     dataframe::DataFrameWriteOptions,
-    prelude::{cast, col, lit, to_hex, DataFrame, SessionContext},
+    prelude::{DataFrame, SessionContext, cast, col, lit, to_hex},
 };
-use noodles::vcf::{self, Header, Record, header::SampleNames, variant::io::Write};
+use noodles::{
+    fasta::{self, repository::adapters::IndexedReader},
+    vcf::{self, header::SampleNames, variant::io::Write, Header, Record},
+};
 use svelt::{
-    almost::find_almost_exact, chroms::ChromSet, construct::construct_record, exact::find_exact,
-    record_seeker::RecordSeeker, row_key::RowKey, tables::load_vcf_core, vcf_reader::VcfReader,
+    almost::find_almost_exact, backward::find_backwards_bnds, chroms::ChromSet, construct::construct_record, exact::find_exact, options::Options, record_seeker::RecordSeeker, row_key::RowKey, tables::load_vcf_core, vcf_reader::VcfReader
 };
 
 /// Structuaral Variant (SV) VCF merging
@@ -39,6 +41,10 @@ enum Commands {
         /// Force ALTs to be symbolic
         #[arg(short, long)]
         force_alt_tags: bool,
+
+        /// Reference sequence. Required for some extended type of merging.
+        #[arg(short, long)]
+        reference: Option<String>,
 
         /// The output filename
         #[arg(short, long)]
@@ -76,6 +82,7 @@ async fn main() -> std::io::Result<()> {
             out,
             vcf,
             force_alt_tags,
+            reference,
             write_merge_table,
         } => {
             let chroms = load_chroms(&vcf[0])?;
@@ -114,9 +121,22 @@ async fn main() -> std::io::Result<()> {
                 .with_column("vix_count", lit(1))?
                 .with_column("vix_set", cast(col("vix"), DataType::Int64))?;
 
-            let results = find_exact(&ctx, orig, n as u32).await?;
+            let options = Options::default();
 
-            let results = find_almost_exact(&ctx, results, n as u32).await?;
+            let results = find_exact(&ctx, orig, n as u32, &options).await?;
+
+            let results = find_almost_exact(&ctx, results, n as u32, &options).await?;
+
+            /*
+            let mut results = results;
+            if let Some(reference_filename) = &reference {
+                let reference_reader = fasta::io::indexed_reader::Builder::default()
+                    .build_from_path(reference_filename)?;
+                let adapter = IndexedReader::new(reference_reader);
+                let repo: fasta::Repository = fasta::Repository::new(adapter);
+                results = find_backwards_bnds(&ctx, results, n as u32, &options).await?;
+            }
+             */
 
             if let Some(table_out) = &write_merge_table {
                 let opts = DataFrameWriteOptions::default();
