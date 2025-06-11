@@ -19,7 +19,10 @@ use vcf::variant::record_buf::info::field::value::Array as InfoArray;
 
 use crate::tables::is_seq;
 
-pub fn add_svelt_header_fields(header: &mut Header) -> std::io::Result<()> {
+pub fn add_svelt_header_fields(
+    header: &mut Header,
+    unwanted_info: &Vec<String>,
+) -> std::io::Result<()> {
     let infos = header.infos_mut();
     infos.insert(
         String::from("SVELT_CRITERIA"),
@@ -40,6 +43,11 @@ pub fn add_svelt_header_fields(header: &mut Header) -> std::io::Result<()> {
             .map_err(|e| Error::new(ErrorKind::Other, e))?,
     );
 
+    for unwanted in unwanted_info.iter() {
+        log::info!("removing INFO tag '{}'", unwanted);
+        infos.shift_remove(unwanted);
+    }
+
     Ok(())
 }
 
@@ -48,6 +56,7 @@ pub fn construct_record(
     recs: Vec<Option<(Rc<Header>, Record)>>,
     vix_samples: &Vec<usize>,
     force_alt_tags: bool,
+    unwanted_info: &Vec<String>,
     alts: &Vec<Option<String>>,
     criteria: &str,
 ) -> std::io::Result<RecordBuf> {
@@ -96,7 +105,7 @@ pub fn construct_record(
     filters.sort();
     let filters = Filters::from_iter(filters.into_iter());
 
-    let mut info = Vec::new();
+    let mut info: Vec<(String, Option<InfoValue>)> = Vec::new();
     for item in the_record.info().iter(&the_header) {
         let (name, value) = item?;
         let name = String::from(name);
@@ -104,9 +113,11 @@ pub fn construct_record(
         info.push((name, value));
     }
     if criteria.len() > 0 {
+        let criteria: Vec<Option<String>> =
+            criteria.split(',').map(|s| Some(String::from(s))).collect();
         info.push((
             String::from("SVELT_CRITERIA"),
-            Some(InfoValue::String(String::from(criteria))),
+            Some(InfoValue::Array(InfoArray::String(criteria))),
         ));
     }
     let mut alt_sequences = Vec::new();
@@ -121,6 +132,10 @@ pub fn construct_record(
             Some(InfoValue::Array(InfoArray::String(alt_sequences))),
         ));
     }
+    let info: Vec<(String, Option<InfoValue>)> = info
+        .into_iter()
+        .filter(|item| unwanted_info.iter().all(|unwanted| &item.0 != unwanted))
+        .collect();
     let info = Info::from_iter(info.into_iter());
 
     let keys: Vec<String> = the_record

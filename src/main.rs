@@ -7,18 +7,25 @@ use std::{
 use autocompress::autodetect_create;
 use clap::{Parser, Subcommand};
 use datafusion::{
-    arrow::{array::{GenericStringArray, Int64Array}, datatypes::DataType},
+    arrow::{
+        array::{GenericStringArray, Int64Array},
+        datatypes::DataType,
+    },
     config::CsvOptions,
     dataframe::DataFrameWriteOptions,
-    prelude::{cast, col, lit, nullif, to_hex, DataFrame, SessionContext},
+    prelude::{DataFrame, SessionContext, cast, col, lit, nullif, to_hex},
 };
-use noodles::vcf::{
-        self, header::SampleNames, variant::io::Write, Header, Record
-    };
+use noodles::vcf::{self, Header, Record, header::SampleNames, variant::io::Write};
 use svelt::{
-    almost::find_almost_exact, chroms::ChromSet,
-    construct::{add_svelt_header_fields, construct_record}, exact::find_exact, options::Options, record_seeker::RecordSeeker,
-    row_key::RowKey, tables::load_vcf_core, vcf_reader::VcfReader,
+    almost::find_almost_exact,
+    chroms::ChromSet,
+    construct::{add_svelt_header_fields, construct_record},
+    exact::find_exact,
+    options::Options,
+    record_seeker::RecordSeeker,
+    row_key::RowKey,
+    tables::load_vcf_core,
+    vcf_reader::VcfReader,
 };
 
 /// Structuaral Variant (SV) VCF merging
@@ -42,6 +49,10 @@ enum Commands {
         /// Force ALTs to be symbolic
         #[arg(short, long)]
         force_alt_tags: bool,
+
+        /// INFO fields to drop (if they exist)
+        #[arg(short, long, value_delimiter = ',')]
+        unwanted_info: Vec<String>,
 
         /// Reference sequence. Required for some extended type of merging.
         #[arg(short, long)]
@@ -83,6 +94,7 @@ async fn main() -> std::io::Result<()> {
             out,
             vcf,
             force_alt_tags,
+            unwanted_info,
             reference,
             write_merge_table,
         } => {
@@ -182,7 +194,7 @@ async fn main() -> std::io::Result<()> {
             let mut header = readers[0].header.clone();
             *header.sample_names_mut() =
                 SampleNames::from_iter(sample_names.iter().map(|s| s.clone()));
-            add_svelt_header_fields(&mut header)?;
+            add_svelt_header_fields(&mut header, &unwanted_info)?;
 
             let mut seekers = Vec::new();
             for path in vcf.iter() {
@@ -198,7 +210,8 @@ async fn main() -> std::io::Result<()> {
             let mut current_chrom = String::new();
             let mut current_row_key = u32::MAX;
             let mut current_row: Vec<Option<u32>> = (0..n).into_iter().map(|_| None).collect();
-            let mut current_row_alts: Vec<Option<String>> = (0..n).into_iter().map(|_| None).collect();
+            let mut current_row_alts: Vec<Option<String>> =
+                (0..n).into_iter().map(|_| None).collect();
             let mut current_row_criteria = String::new();
 
             for recs in table.into_iter() {
@@ -218,17 +231,17 @@ async fn main() -> std::io::Result<()> {
                     .downcast_ref::<Int64Array>()
                     .unwrap();
                 let alt_seqs = recs
-                .column_by_name("alt_seq")
-                .unwrap()
-                .as_any()
-                .downcast_ref::<GenericStringArray<i32>>()
-                .unwrap();
+                    .column_by_name("alt_seq")
+                    .unwrap()
+                    .as_any()
+                    .downcast_ref::<GenericStringArray<i32>>()
+                    .unwrap();
                 let criteria = recs
-                .column_by_name("criteria")
-                .unwrap()
-                .as_any()
-                .downcast_ref::<GenericStringArray<i32>>()
-                .unwrap();
+                    .column_by_name("criteria")
+                    .unwrap()
+                    .as_any()
+                    .downcast_ref::<GenericStringArray<i32>>()
+                    .unwrap();
 
                 for i in 0..row_ids.len() {
                     let row_id = row_ids.value(i) as u32;
@@ -247,8 +260,15 @@ async fn main() -> std::io::Result<()> {
                             }
                         }
                         if !is_empty {
-                            let rec =
-                                construct_record(&header, recs, &vix_samples, force_alt_tags, &current_row_alts, &current_row_criteria)?;
+                            let rec = construct_record(
+                                &header,
+                                recs,
+                                &vix_samples,
+                                force_alt_tags,
+                                &unwanted_info,
+                                &current_row_alts,
+                                &current_row_criteria,
+                            )?;
                             writer.write_variant_record(&header, &rec)?;
                             if rec.reference_sequence_name() != &current_chrom {
                                 current_chrom = String::from(rec.reference_sequence_name());
@@ -288,7 +308,15 @@ async fn main() -> std::io::Result<()> {
                 }
             }
             if !is_empty {
-                let rec = construct_record(&header, recs, &vix_samples, force_alt_tags, &current_row_alts, &current_row_criteria)?;
+                let rec = construct_record(
+                    &header,
+                    recs,
+                    &vix_samples,
+                    force_alt_tags,
+                    &unwanted_info,
+                    &current_row_alts,
+                    &current_row_criteria,
+                )?;
                 writer.write_variant_record(&header, &rec)?;
             }
         }
