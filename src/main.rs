@@ -7,22 +7,17 @@ use std::{
 use autocompress::autodetect_create;
 use clap::{Parser, Subcommand};
 use datafusion::{
-    arrow::{array::{GenericStringArray, Int64Array}, datatypes::{DataType, Utf8Type}},
+    arrow::{array::{GenericStringArray, Int64Array}, datatypes::DataType},
     config::CsvOptions,
     dataframe::DataFrameWriteOptions,
     prelude::{cast, col, lit, nullif, to_hex, DataFrame, SessionContext},
 };
-use noodles::{
-    fasta::{self, repository::adapters::IndexedReader},
-    vcf::{
-        self, header::{
-            record::value::map::{info::{Number, Type}, Builder}, SampleNames
-        }, variant::io::Write, Header, Record
-    },
-};
+use noodles::vcf::{
+        self, header::SampleNames, variant::io::Write, Header, Record
+    };
 use svelt::{
-    almost::find_almost_exact, backward::find_backwards_bnds, chroms::ChromSet,
-    construct::construct_record, exact::find_exact, options::Options, record_seeker::RecordSeeker,
+    almost::find_almost_exact, chroms::ChromSet,
+    construct::{add_svelt_header_fields, construct_record}, exact::find_exact, options::Options, record_seeker::RecordSeeker,
     row_key::RowKey, tables::load_vcf_core, vcf_reader::VcfReader,
 };
 
@@ -187,16 +182,7 @@ async fn main() -> std::io::Result<()> {
             let mut header = readers[0].header.clone();
             *header.sample_names_mut() =
                 SampleNames::from_iter(sample_names.iter().map(|s| s.clone()));
-            let infos = header.infos_mut();
-            infos.insert(
-                String::from("SVELT_CRITERIA"),
-                Builder::default()
-                    .set_number(Number::Unknown)
-                    .set_type(Type::String)
-                    .set_description("The list of criteria that resulted in the merging of these variants.")
-                    .build()
-                    .map_err(|e| Error::new(ErrorKind::Other, e))?,
-            );
+            add_svelt_header_fields(&mut header)?;
 
             let mut seekers = Vec::new();
             for path in vcf.iter() {

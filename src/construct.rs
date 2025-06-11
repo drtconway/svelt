@@ -1,7 +1,10 @@
 use std::collections::HashSet;
+use std::io::{Error, ErrorKind};
 use std::rc::Rc;
 
 use noodles::vcf;
+use noodles::vcf::header::record::value::map::info::{Number, Type};
+use noodles::vcf::header::record::value::map::Builder;
 use noodles::vcf::variant::record::{
     AlternateBases as AlternateBases_, Filters as Filters_, Ids as Ids_,
 };
@@ -14,6 +17,21 @@ use noodles::vcf::variant::record_buf::{AlternateBases, Filters, Ids, Info, Samp
 use noodles::vcf::{Header, Record, variant::RecordBuf};
 
 use crate::tables::is_seq;
+
+pub fn add_svelt_header_fields(header: &mut Header) -> std::io::Result<()> {
+    let infos = header.infos_mut();
+    infos.insert(
+        String::from("SVELT_CRITERIA"),
+        Builder::default()
+            .set_number(Number::Unknown)
+            .set_type(Type::String)
+            .set_description("The list of criteria that resulted in the merging of these variants.")
+            .build()
+            .map_err(|e| Error::new(ErrorKind::Other, e))?,
+    );
+
+    Ok(())
+}
 
 pub fn construct_record(
     header: &Header,
