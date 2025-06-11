@@ -198,6 +198,7 @@ async fn main() -> std::io::Result<()> {
             let mut current_chrom = String::new();
             let mut current_row_key = u32::MAX;
             let mut current_row: Vec<Option<u32>> = (0..n).into_iter().map(|_| None).collect();
+            let mut current_row_alts: Vec<Option<String>> = (0..n).into_iter().map(|_| None).collect();
             let mut current_row_criteria = String::new();
 
             for recs in table.into_iter() {
@@ -216,6 +217,12 @@ async fn main() -> std::io::Result<()> {
                     .as_any()
                     .downcast_ref::<Int64Array>()
                     .unwrap();
+                let alt_seqs = recs
+                .column_by_name("alt_seq")
+                .unwrap()
+                .as_any()
+                .downcast_ref::<GenericStringArray<i32>>()
+                .unwrap();
                 let criteria = recs
                 .column_by_name("criteria")
                 .unwrap()
@@ -241,7 +248,7 @@ async fn main() -> std::io::Result<()> {
                         }
                         if !is_empty {
                             let rec =
-                                construct_record(&header, recs, &vix_samples, force_alt_tags, &current_row_criteria)?;
+                                construct_record(&header, recs, &vix_samples, force_alt_tags, &current_row_alts, &current_row_criteria)?;
                             writer.write_variant_record(&header, &rec)?;
                             if rec.reference_sequence_name() != &current_chrom {
                                 current_chrom = String::from(rec.reference_sequence_name());
@@ -252,10 +259,16 @@ async fn main() -> std::io::Result<()> {
                         current_row = (0..n).into_iter().map(|_| None).collect();
                         current_row_key = row_key;
                         current_row_criteria = String::new();
+                        current_row_alts = (0..n).into_iter().map(|_| None).collect();
                     }
 
                     let (vix, rn) = RowKey::decode(row_id);
                     current_row[vix as usize] = Some(rn);
+
+                    let alt_seq = alt_seqs.value(i);
+                    if alt_seq.len() > 0 {
+                        current_row_alts[vix as usize] = Some(String::from(alt_seq));
+                    }
 
                     let crit = criteria.value(i);
                     if crit.len() > current_row_criteria.len() {
@@ -275,7 +288,7 @@ async fn main() -> std::io::Result<()> {
                 }
             }
             if !is_empty {
-                let rec = construct_record(&header, recs, &vix_samples, force_alt_tags, &current_row_criteria)?;
+                let rec = construct_record(&header, recs, &vix_samples, force_alt_tags, &current_row_alts, &current_row_criteria)?;
                 writer.write_variant_record(&header, &rec)?;
             }
         }

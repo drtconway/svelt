@@ -61,17 +61,18 @@ sequence involved to being highly homologous.
 - The QUAL field is taken as the maximum score across the merged records.
 - The FILTER column is taken as the union of the FILTER values across the
   merged recrods.
-
+- If ALT sequences are being replaced with `<ALT>` tags, an INFO field
+  `SVELT_ALT_SEQ` is generated with the sequences. NB they do not include
+  the context base at the start which is not part of the insertion.
+- An INFO tag `SVELT_CRITERIA` is generated which contains the criteria
+  used for merging the given alleles.
+  
 ## TODO
 
 ## Output Generation
 
 - Currently the INFO column is naively populated from the left-most INFO. For
   standard INFO fields, we should consider merging.
-- It would be nice to generate INFO tags documenting which rule was used to merge
-  the variants.
-- It would be nice to generate INFO tags containing the relevant sequence for
-  INS/DUP/INV/DEL variants, where this is known.
 
 ### Additional Merging Rules
 

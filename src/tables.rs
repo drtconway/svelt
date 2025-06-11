@@ -5,7 +5,7 @@ use std::{
 
 use blake2::{Blake2b512, Digest};
 use datafusion::arrow::{
-    array::{PrimitiveBuilder, RecordBatch, StringDictionaryBuilder},
+    array::{GenericStringBuilder, PrimitiveBuilder, RecordBatch, StringDictionaryBuilder},
     datatypes::{
         DataType, Field, Int32Type, Int64Type, Schema, UInt16Type, UInt32Type, UInt8Type
     },
@@ -33,6 +33,7 @@ pub fn vcf_core_schema() -> Arc<Schema> {
         Field::new("chrom2_id", DataType::UInt16, true),
         Field::new_dictionary("chrom2", DataType::UInt16, DataType::Utf8, true),
         Field::new("end2", DataType::UInt32, true),
+        Field::new("alt_seq", DataType::Utf8, true),
         Field::new("seq_hash", DataType::Int64, true),
     ]))
 }
@@ -51,6 +52,7 @@ pub fn load_vcf_core(reader: &mut VcfReader) -> std::io::Result<RecordBatch> {
     let mut chrom2_id_builder = PrimitiveBuilder::<UInt16Type>::new();
     let mut chrom2_builder = StringDictionaryBuilder::<UInt16Type>::new();
     let mut end2_builder = PrimitiveBuilder::<UInt32Type>::new();
+    let mut alt_seq_builder = GenericStringBuilder::<i32>::new();
     let mut seq_hash_builder = PrimitiveBuilder::<Int64Type>::new();
 
     for (rn, rec) in reader.reader.records().enumerate() {
@@ -116,7 +118,22 @@ pub fn load_vcf_core(reader: &mut VcfReader) -> std::io::Result<RecordBatch> {
             Ok(None)
         }
         .map_err(as_io_error)?;
-        let seq = if kind == "INS" {
+            let seq: Option<String> = if kind == "INS" {
+                if let Some(alt) = rec.alternate_bases().iter().next() {
+                    let alt = alt?;
+                    if is_seq(alt) {
+                        Ok(Some(String::from(&alt[1..])))
+                    } else {
+                        Ok(None)
+                    }
+                } else {
+                    Ok(None)
+                }
+            } else {
+                Ok(None)
+            }
+            .map_err(as_io_error)?;
+        let seq_hash = if kind == "INS" {
             if let Some(alt) = rec.alternate_bases().iter().next() {
                 let alt = alt?;
                 if is_seq(alt) {
@@ -143,7 +160,8 @@ pub fn load_vcf_core(reader: &mut VcfReader) -> std::io::Result<RecordBatch> {
         chrom2_id_builder.append_option(chrom2_id);
         chrom2_builder.append_option(chrom2);
         end2_builder.append_option(end2);
-        seq_hash_builder.append_option(seq);
+        alt_seq_builder.append_option(seq);
+        seq_hash_builder.append_option(seq_hash);
     }
 
     let row_num_array = row_num_builder.finish();
@@ -156,6 +174,7 @@ pub fn load_vcf_core(reader: &mut VcfReader) -> std::io::Result<RecordBatch> {
     let chrom2_id_array = chrom2_id_builder.finish();
     let chrom2_array = chrom2_builder.finish();
     let end2_array = end2_builder.finish();
+    let alt_seq_array = alt_seq_builder.finish();
     let seq_hash_array = seq_hash_builder.finish();
 
     let res = RecordBatch::try_new(
@@ -171,6 +190,7 @@ pub fn load_vcf_core(reader: &mut VcfReader) -> std::io::Result<RecordBatch> {
             Arc::new(chrom2_id_array),
             Arc::new(chrom2_array),
             Arc::new(end2_array),
+            Arc::new(alt_seq_array),
             Arc::new(seq_hash_array),
         ],
     )

@@ -3,8 +3,8 @@ use std::io::{Error, ErrorKind};
 use std::rc::Rc;
 
 use noodles::vcf;
-use noodles::vcf::header::record::value::map::info::{Number, Type};
 use noodles::vcf::header::record::value::map::Builder;
+use noodles::vcf::header::record::value::map::info::{Number, Type};
 use noodles::vcf::variant::record::{
     AlternateBases as AlternateBases_, Filters as Filters_, Ids as Ids_,
 };
@@ -15,6 +15,7 @@ use noodles::vcf::variant::record_buf::samples::sample::value::genotype::Allele;
 use noodles::vcf::variant::record_buf::samples::sample::value::{Array, Genotype};
 use noodles::vcf::variant::record_buf::{AlternateBases, Filters, Ids, Info, Samples};
 use noodles::vcf::{Header, Record, variant::RecordBuf};
+use vcf::variant::record_buf::info::field::value::Array as InfoArray;
 
 use crate::tables::is_seq;
 
@@ -29,6 +30,15 @@ pub fn add_svelt_header_fields(header: &mut Header) -> std::io::Result<()> {
             .build()
             .map_err(|e| Error::new(ErrorKind::Other, e))?,
     );
+    infos.insert(
+        String::from("SVELT_ALT_SEQ"),
+        Builder::default()
+            .set_number(Number::Unknown)
+            .set_type(Type::String)
+            .set_description("The list of alt sequences that were replaced with the ALT tag.")
+            .build()
+            .map_err(|e| Error::new(ErrorKind::Other, e))?,
+    );
 
     Ok(())
 }
@@ -38,6 +48,7 @@ pub fn construct_record(
     recs: Vec<Option<(Rc<Header>, Record)>>,
     vix_samples: &Vec<usize>,
     force_alt_tags: bool,
+    alts: &Vec<Option<String>>,
     criteria: &str,
 ) -> std::io::Result<RecordBuf> {
     let _ = header;
@@ -96,6 +107,18 @@ pub fn construct_record(
         info.push((
             String::from("SVELT_CRITERIA"),
             Some(InfoValue::String(String::from(criteria))),
+        ));
+    }
+    let mut alt_sequences = Vec::new();
+    for vix in 0..alts.len() {
+        if let Some(alt) = &alts[vix] {
+            alt_sequences.push(Some(String::from(alt)));
+        }
+    }
+    if alt_sequences.len() > 0 {
+        info.push((
+            String::from("SVELT_ALT_SEQ"),
+            Some(InfoValue::Array(InfoArray::String(alt_sequences))),
         ));
     }
     let info = Info::from_iter(info.into_iter());
