@@ -5,6 +5,7 @@ use noodles::vcf;
 use noodles::vcf::variant::record::{
     AlternateBases as AlternateBases_, Filters as Filters_, Ids as Ids_,
 };
+use noodles::vcf::variant::record_buf::info::field::Value as InfoValue;
 use noodles::vcf::variant::record_buf::samples::Keys;
 use noodles::vcf::variant::record_buf::samples::sample::Value;
 use noodles::vcf::variant::record_buf::samples::sample::value::genotype::Allele;
@@ -19,6 +20,7 @@ pub fn construct_record(
     recs: Vec<Option<(Rc<Header>, Record)>>,
     vix_samples: &Vec<usize>,
     force_alt_tags: bool,
+    criteria: &str,
 ) -> std::io::Result<RecordBuf> {
     let _ = header;
     let mut the_record = None;
@@ -56,8 +58,8 @@ pub fn construct_record(
     for vix in 0..recs.len() {
         if let Some(hnr) = &recs[vix] {
             for filter in hnr.1.filters().iter(hnr.0.as_ref()) {
-            let filter = filter?;
-            filters.insert(String::from(filter));
+                let filter = filter?;
+                filters.insert(String::from(filter));
             }
         }
     }
@@ -71,6 +73,12 @@ pub fn construct_record(
         let name = String::from(name);
         let value = value.map(make_info_value);
         info.push((name, value));
+    }
+    if criteria.len() > 0 {
+        info.push((
+            String::from("SVELT_CRITERIA"),
+            Some(InfoValue::String(String::from(criteria))),
+        ));
     }
     let info = Info::from_iter(info.into_iter());
 

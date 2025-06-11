@@ -141,7 +141,7 @@ pub async fn find_almost_exact_non_bnd(
             .await?;
     }
 
-    let tbl = update_tables(tbl, resolution).await?;
+    let tbl = update_tables(tbl, resolution, "near").await?;
 
     Ok(tbl)
 }
@@ -209,7 +209,7 @@ pub async fn find_almost_exact_bnd(
             .await?;
     }
 
-    let tbl = update_tables(tbl, resolution).await?;
+    let tbl = update_tables(tbl, resolution, "near-BND").await?;
 
     Ok(tbl)
 }

@@ -1,5 +1,5 @@
 use std::{
-    io::{BufRead, Error, ErrorKind},
+    io::{BufRead, BufWriter, Error, ErrorKind},
     rc::Rc,
     u32,
 };
@@ -7,17 +7,23 @@ use std::{
 use autocompress::autodetect_create;
 use clap::{Parser, Subcommand};
 use datafusion::{
-    arrow::{array::Int64Array, datatypes::DataType},
+    arrow::{array::{GenericStringArray, Int64Array}, datatypes::{DataType, Utf8Type}},
     config::CsvOptions,
     dataframe::DataFrameWriteOptions,
-    prelude::{DataFrame, SessionContext, cast, col, lit, to_hex},
+    prelude::{cast, col, lit, nullif, to_hex, DataFrame, SessionContext},
 };
 use noodles::{
     fasta::{self, repository::adapters::IndexedReader},
-    vcf::{self, header::SampleNames, variant::io::Write, Header, Record},
+    vcf::{
+        self, header::{
+            record::value::map::{info::{Number, Type}, Builder}, SampleNames
+        }, variant::io::Write, Header, Record
+    },
 };
 use svelt::{
-    almost::find_almost_exact, backward::find_backwards_bnds, chroms::ChromSet, construct::construct_record, exact::find_exact, options::Options, record_seeker::RecordSeeker, row_key::RowKey, tables::load_vcf_core, vcf_reader::VcfReader
+    almost::find_almost_exact, backward::find_backwards_bnds, chroms::ChromSet,
+    construct::construct_record, exact::find_exact, options::Options, record_seeker::RecordSeeker,
+    row_key::RowKey, tables::load_vcf_core, vcf_reader::VcfReader,
 };
 
 /// Structuaral Variant (SV) VCF merging
@@ -119,7 +125,8 @@ async fn main() -> std::io::Result<()> {
             let orig = orig
                 .with_column("row_key", col("row_id"))?
                 .with_column("vix_count", lit(1))?
-                .with_column("vix_set", cast(col("vix"), DataType::Int64))?;
+                .with_column("vix_set", cast(col("vix"), DataType::Int64))?
+                .with_column("criteria", nullif(lit(1), lit(1)))?;
 
             let options = Options::default();
 
@@ -180,6 +187,16 @@ async fn main() -> std::io::Result<()> {
             let mut header = readers[0].header.clone();
             *header.sample_names_mut() =
                 SampleNames::from_iter(sample_names.iter().map(|s| s.clone()));
+            let infos = header.infos_mut();
+            infos.insert(
+                String::from("SVELT_CRITERIA"),
+                Builder::default()
+                    .set_number(Number::Unknown)
+                    .set_type(Type::String)
+                    .set_description("The list of criteria that resulted in the merging of these variants.")
+                    .build()
+                    .map_err(|e| Error::new(ErrorKind::Other, e))?,
+            );
 
             let mut seekers = Vec::new();
             for path in vcf.iter() {
@@ -188,12 +205,14 @@ async fn main() -> std::io::Result<()> {
             }
 
             let writer = autodetect_create(out, autocompress::CompressionLevel::Default)?;
+            let writer = BufWriter::new(writer);
             let mut writer = vcf::io::Writer::new(writer);
             writer.write_header(&header)?;
 
             let mut current_chrom = String::new();
             let mut current_row_key = u32::MAX;
             let mut current_row: Vec<Option<u32>> = (0..n).into_iter().map(|_| None).collect();
+            let mut current_row_criteria = String::new();
 
             for recs in table.into_iter() {
                 for field in recs.schema_ref().fields().iter() {
@@ -211,6 +230,12 @@ async fn main() -> std::io::Result<()> {
                     .as_any()
                     .downcast_ref::<Int64Array>()
                     .unwrap();
+                let criteria = recs
+                .column_by_name("criteria")
+                .unwrap()
+                .as_any()
+                .downcast_ref::<GenericStringArray<i32>>()
+                .unwrap();
 
                 for i in 0..row_ids.len() {
                     let row_id = row_ids.value(i) as u32;
@@ -230,7 +255,7 @@ async fn main() -> std::io::Result<()> {
                         }
                         if !is_empty {
                             let rec =
-                                construct_record(&header, recs, &vix_samples, force_alt_tags)?;
+                                construct_record(&header, recs, &vix_samples, force_alt_tags, &current_row_criteria)?;
                             writer.write_variant_record(&header, &rec)?;
                             if rec.reference_sequence_name() != &current_chrom {
                                 current_chrom = String::from(rec.reference_sequence_name());
@@ -240,9 +265,16 @@ async fn main() -> std::io::Result<()> {
 
                         current_row = (0..n).into_iter().map(|_| None).collect();
                         current_row_key = row_key;
+                        current_row_criteria = String::new();
                     }
+
                     let (vix, rn) = RowKey::decode(row_id);
                     current_row[vix as usize] = Some(rn);
+
+                    let crit = criteria.value(i);
+                    if crit.len() > current_row_criteria.len() {
+                        current_row_criteria = String::from(crit);
+                    }
                 }
             }
             log::debug!("flushing group: {} {:?}", current_row_key, current_row);
@@ -257,7 +289,7 @@ async fn main() -> std::io::Result<()> {
                 }
             }
             if !is_empty {
-                let rec = construct_record(&header, recs, &vix_samples, force_alt_tags)?;
+                let rec = construct_record(&header, recs, &vix_samples, force_alt_tags, &current_row_criteria)?;
                 writer.write_variant_record(&header, &rec)?;
             }
         }

@@ -1,10 +1,18 @@
-use std::{collections::HashMap, io::{Error, ErrorKind}, sync::Arc};
+use std::{
+    collections::HashMap,
+    io::{Error, ErrorKind},
+    sync::Arc,
+};
 
-use datafusion::{arrow::{array::{Int64Array, PrimitiveBuilder, RecordBatch}, datatypes::{DataType, Field, Schema, UInt32Type}}, prelude::{coalesce, col, DataFrame}};
+use datafusion::{
+    arrow::{
+        array::{Int64Array, PrimitiveBuilder, RecordBatch},
+        datatypes::{DataType, Field, Schema, UInt32Type},
+    },
+    prelude::{coalesce, col, concat_ws, lit, nullif, DataFrame},
+};
 
 use crate::disjoint_set::DisjointSet;
-
-
 
 pub async fn resolve_groups(tbl: DataFrame) -> std::io::Result<RecordBatch> {
     let batch = tbl.collect().await?;
@@ -130,8 +138,13 @@ pub async fn resolve_groups(tbl: DataFrame) -> std::io::Result<RecordBatch> {
     Ok(recs)
 }
 
-pub async fn update_tables(tbl: DataFrame, resolution: DataFrame) -> std::io::Result<DataFrame> {
-        let tbl = tbl
+pub async fn update_tables(
+    tbl: DataFrame,
+    resolution: DataFrame,
+    criterion: &str,
+) -> std::io::Result<DataFrame> {
+    let resolution = resolution.with_column("new_criterion", lit(criterion))?;
+    let tbl = tbl
         .join(
             resolution,
             datafusion::common::JoinType::Left,
@@ -151,7 +164,11 @@ pub async fn update_tables(tbl: DataFrame, resolution: DataFrame) -> std::io::Re
             "vix_set",
             coalesce(vec![col("new_vix_set"), col("vix_set")]),
         )?
-        .drop_columns(&["orig_row_id", "new_row_key", "new_vix_count", "new_vix_set"])?;
+        .with_column(
+            "criteria",
+            nullif(concat_ws(lit(","), vec![col("criteria"), col("new_criterion")]), lit("")),
+        )?
+        .drop_columns(&["orig_row_id", "new_row_key", "new_vix_count", "new_vix_set", "new_criterion"])?;
 
     if false {
         tbl.clone()

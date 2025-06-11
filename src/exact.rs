@@ -92,7 +92,7 @@ pub async fn find_exact_non_bnd(
             .await?;
     }
 
-    let tbl = update_tables(tbl, resolution).await?;
+    let tbl = update_tables(tbl, resolution, "exact").await?;
 
     Ok(tbl)
 }
@@ -167,7 +167,7 @@ pub async fn find_exact_bnd(
             .await?;
     }
 
-    let tbl = update_tables(tbl, resolution).await?;
+    let tbl = update_tables(tbl, resolution, "exact-BND").await?;
 
     Ok(tbl)
 }
