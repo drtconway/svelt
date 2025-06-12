@@ -7,6 +7,7 @@ use crate::{
     errors::{SveltError, as_io_error},
 };
 
+/// A wrapper for a VCF reader that facilitates some of the manipulations.
 pub struct VcfReader {
     pub path: String,
     pub reader: vcf::io::Reader<Box<dyn BufRead>>,
@@ -15,6 +16,7 @@ pub struct VcfReader {
 }
 
 impl VcfReader {
+    /// Construct a new `VcfReader`, checking that the chromosomes are what we expect.
     pub fn new(path: &str, chroms: Rc<ChromSet>) -> std::io::Result<VcfReader> {
         let path = String::from(path);
         let reader = autocompress::autodetect_open(&path)?;
@@ -31,6 +33,7 @@ impl VcfReader {
         })
     }
 
+    /// Rewind the `VcfReader` to the start. (Actually implemented by reopening it.)
     pub fn rewind(&mut self) -> std::io::Result<()> {
         let reader = autocompress::autodetect_open(&self.path)?;
         let mut reader: vcf::io::Reader<Box<dyn BufRead>> =
@@ -40,6 +43,7 @@ impl VcfReader {
         Ok(())
     }
 
+    /// Pull out an INFO field that we expect to be of String type.
     pub fn info_as_str(rec: &Record, header: &Header, name: &str) -> std::io::Result<Option<String>> {
         if let Some(field) = rec.info().get(header, name) {
             let field = field?;
@@ -65,6 +69,7 @@ impl VcfReader {
         }
     }
 
+    /// Pull out an INFO field that we expect to be of Integer type.
     pub fn info_as_int(rec: &Record, header: &Header, name: &str) -> std::io::Result<Option<i32>> {
         if let Some(field) = rec.info().get(header, name) {
             let field = field?;
@@ -91,6 +96,7 @@ impl VcfReader {
     }
 }
 
+/// Check that the set of chromosomes in the header are what we expect.
 pub fn check_chroms(header: &Header, chroms: &ChromSet) -> std::result::Result<(), SveltError> {
     let n = chroms.len();
     let n0 = header.contigs().len();

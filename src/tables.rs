@@ -21,6 +21,7 @@ use crate::{
     vcf_reader::VcfReader,
 };
 
+/// Return a schema for the core SV VCF fields we use.
 pub fn vcf_core_schema() -> Arc<Schema> {
     Arc::new(Schema::new(vec![
         Field::new("row_num", DataType::UInt32, false),
@@ -38,6 +39,7 @@ pub fn vcf_core_schema() -> Arc<Schema> {
     ]))
 }
 
+/// Read all the records in the VCF are return them as a `RecordBatch`
 pub fn load_vcf_core(reader: &mut VcfReader) -> std::io::Result<RecordBatch> {
     let header: &Header = &reader.header;
     let chroms: &ChromSet = reader.chroms.as_ref();
