@@ -7,7 +7,6 @@ pub mod disjoint_set;
 pub mod errors;
 pub mod exact;
 pub mod expressions;
-pub mod keys;
 pub mod merge;
 pub mod nearest;
 pub mod options;
