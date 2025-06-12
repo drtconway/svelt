@@ -8,8 +8,7 @@ use datafusion::{
     arrow::{
         array::{Int64Array, PrimitiveBuilder, RecordBatch},
         datatypes::{DataType, Field, Schema, UInt32Type},
-    },
-    prelude::{coalesce, col, concat_ws, lit, nullif, DataFrame},
+    }, common::JoinType, prelude::{coalesce, col, concat_ws, lit, nullif, DataFrame}
 };
 
 use crate::disjoint_set::DisjointSet;
@@ -147,7 +146,7 @@ pub async fn update_tables(
     let tbl = tbl
         .join(
             resolution,
-            datafusion::common::JoinType::Left,
+            JoinType::Left,
             &["row_id"],
             &["orig_row_id"],
             None,

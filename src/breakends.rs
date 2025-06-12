@@ -1,3 +1,5 @@
+use std::cmp::max;
+
 use noodles::{core::Position, fasta::Repository};
 use regex::Regex;
 
@@ -41,6 +43,7 @@ pub fn parse_breakend(
     Err(SveltError::BadBreakEnd(String::from(alt)))
 }
 
+#[derive(Debug)]
 pub struct BreakEnd {
     chrom: String,
     end: usize,
@@ -82,7 +85,7 @@ impl BreakEnd {
         }
     }
 
-    pub fn format(&self, repo: Repository) -> std::io::Result<(String, usize, String)> {
+    pub fn format(&self, repo: Repository) -> std::io::Result<(String, usize, char, String)> {
         let BreakEnd {
             chrom,
             end,
@@ -91,9 +94,11 @@ impl BreakEnd {
             end2,
             side2,
         } = self;
-        let pos = Position::try_from(*end).unwrap();
+        let end = max(1, *end); // Urk! Thanks for that Sniffles!
+        let pos = Position::try_from(end).unwrap();
         let seq = repo.get(chrom.as_ref()).unwrap()?;
         let b: &u8 = seq.get(pos).unwrap();
+        let b = *b as char;
         let alt = match (side, side2) {
             (BreakEndSide::Before, BreakEndSide::Before) => {
             format!("]{}:{}]{}", chrom2, end2, b)
@@ -108,6 +113,6 @@ impl BreakEnd {
                 format!("{}[{}:{}[", b, chrom2, end2)
             },
         };
-        Ok((chrom.clone(), *end, alt))
+        Ok((chrom.clone(), end, b, alt))
     }
 }

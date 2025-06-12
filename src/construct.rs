@@ -2,6 +2,8 @@ use std::collections::HashSet;
 use std::io::{Error, ErrorKind};
 use std::rc::Rc;
 
+use noodles::core::Position;
+use noodles::fasta::Repository;
 use noodles::vcf;
 use noodles::vcf::header::record::value::map::Builder;
 use noodles::vcf::header::record::value::map::info::{Number, Type};
@@ -17,6 +19,7 @@ use noodles::vcf::variant::record_buf::{AlternateBases, Filters, Ids, Info, Samp
 use noodles::vcf::{Header, Record, variant::RecordBuf};
 use vcf::variant::record_buf::info::field::value::Array as InfoArray;
 
+use crate::breakends::BreakEnd;
 use crate::tables::is_seq;
 
 pub fn add_svelt_header_fields(
@@ -58,7 +61,9 @@ pub fn construct_record(
     force_alt_tags: bool,
     unwanted_info: &Vec<String>,
     alts: &Vec<Option<String>>,
+    flip: bool,
     criteria: &str,
+    repo: &Option<Repository>
 ) -> std::io::Result<RecordBuf> {
     let _ = header;
     let mut the_record = None;
@@ -70,7 +75,9 @@ pub fn construct_record(
     }
     let (the_header, the_record) = the_record.unwrap();
 
-    let variant_start = the_record.variant_start().unwrap()?;
+    let mut chrom = String::from(the_record.reference_sequence_name());
+
+    let mut variant_start = the_record.variant_start().unwrap()?;
 
     let mut ids = Vec::new();
     for id in the_record.ids().iter() {
@@ -79,6 +86,24 @@ pub fn construct_record(
     let ids = Ids::from_iter(ids.into_iter());
 
     let (reference_bases, alternate_bases) = make_ref_and_alt(&the_record, force_alt_tags)?;
+    let mut reference_bases = reference_bases;
+    let mut alternate_bases = alternate_bases;
+
+    if flip {
+        assert_eq!(alternate_bases.len(), 1);
+        let orig = BreakEnd::new(&chrom, variant_start.get(), &alternate_bases[0])
+            .map_err(|e| Error::new(ErrorKind::Other, e))?;
+        log::info!("unflipped: {:?}", orig);
+        let flipped = orig.flip();
+        let flipped = flipped.format(repo.clone().unwrap())?;
+        log::info!("flipped: {:?}", flipped);
+        chrom = flipped.0;
+        variant_start = Position::try_from(flipped.1).unwrap();
+        reference_bases = String::from(flipped.2);
+        alternate_bases[0] = flipped.3;
+    }
+
+    let alternate_bases = AlternateBases::from(alternate_bases);
 
     let mut quality_score: f32 = 0.0;
     for vix in 0..recs.len() {
@@ -175,7 +200,7 @@ pub fn construct_record(
 
     let bldr = RecordBuf::builder();
     let res = bldr
-        .set_reference_sequence_name(the_record.reference_sequence_name())
+        .set_reference_sequence_name(chrom)
         .set_variant_start(variant_start)
         .set_ids(ids)
         .set_reference_bases(reference_bases)
@@ -191,10 +216,7 @@ pub fn construct_record(
     Ok(res)
 }
 
-fn make_ref_and_alt(
-    rec: &Record,
-    force_alt_tags: bool,
-) -> std::io::Result<(String, AlternateBases)> {
+fn make_ref_and_alt(rec: &Record, force_alt_tags: bool) -> std::io::Result<(String, Vec<String>)> {
     let mut reference_bases = String::from(rec.reference_bases());
 
     let mut alternate_bases = Vec::new();
@@ -213,9 +235,7 @@ fn make_ref_and_alt(
         }
     }
 
-    let alterate_bases = AlternateBases::from(alternate_bases);
-
-    Ok((reference_bases, alterate_bases))
+    Ok((reference_bases, alternate_bases))
 }
 
 fn make_info_value(
