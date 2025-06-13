@@ -1,5 +1,6 @@
 use clap::{ArgAction, Args};
 
+/// Options controlling the merge process
 #[derive(Debug, Args)]
 pub struct Options {
     /// Allowed distance for merging of events
@@ -21,4 +22,12 @@ pub struct Options {
         default_missing_value = "true",
         num_args = 0..=1,)]
     pub force_alt_tags: bool,
+
+    /// Allow breakend variants to be flipped
+    #[arg(long,
+        action = ArgAction::Set,
+        default_value_t = true,
+        default_missing_value = "true",
+        num_args = 0..=1,)]
+    pub allow_breakend_flipping: bool,
 }

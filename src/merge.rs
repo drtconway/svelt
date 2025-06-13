@@ -88,7 +88,9 @@ pub async fn merge_vcfs(
             fasta::io::indexed_reader::Builder::default().build_from_path(reference_filename)?;
         let adapter = IndexedReader::new(reference_reader);
         repo = Some(fasta::Repository::new(adapter));
-        results = find_backwards_bnds(&ctx, results, n as u32, &options).await?;
+        if options.allow_breakend_flipping {
+            results = find_backwards_bnds(&ctx, results, n as u32, &options).await?;
+        }
     }
 
     if let Some(table_out) = &write_merge_table {
