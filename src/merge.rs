@@ -34,10 +34,10 @@ use crate::{
 pub async fn merge_vcfs(
     out: &str,
     vcf: &Vec<String>,
-    force_alt_tags: bool,
     unwanted_info: &Vec<String>,
     reference: &Option<String>,
     write_merge_table: &Option<String>,
+    options: &Options
 ) -> std::io::Result<()> {
     let chroms = load_chroms(&vcf[0])?;
     let chroms = Rc::new(chroms);
@@ -77,11 +77,9 @@ pub async fn merge_vcfs(
         .with_column("flip", lit(false))?
         .with_column("criteria", nullif(lit(1), lit(1)))?;
 
-    let options = Options::default();
+    let results = find_exact(&ctx, orig, n as u32, options).await?;
 
-    let results = find_exact(&ctx, orig, n as u32, &options).await?;
-
-    let results = find_almost_exact(&ctx, results, n as u32, &options).await?;
+    let results = find_almost_exact(&ctx, results, n as u32, options).await?;
 
     let mut results = results;
     let mut repo = None;
@@ -210,7 +208,7 @@ pub async fn merge_vcfs(
                         &header,
                         recs,
                         &vix_samples,
-                        force_alt_tags,
+                        options.force_alt_tags,
                         &unwanted_info,
                         &current_row_alts,
                         current_row_flip,
@@ -262,7 +260,7 @@ pub async fn merge_vcfs(
             &header,
             recs,
             &vix_samples,
-            force_alt_tags,
+            options.force_alt_tags,
             &unwanted_info,
             &current_row_alts,
             current_row_flip,

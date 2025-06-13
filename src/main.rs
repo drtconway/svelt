@@ -1,6 +1,6 @@
 
 use clap::{Parser, Subcommand};
-use svelt::merge::merge_vcfs;
+use svelt::{merge::merge_vcfs, options::Options};
 
 /// Structuaral Variant (SV) VCF merging
 #[derive(Debug, Parser)]
@@ -20,10 +20,6 @@ enum Commands {
         #[arg(long)]
         write_merge_table: Option<String>,
 
-        /// Force ALTs to be symbolic
-        #[arg(short, long)]
-        force_alt_tags: bool,
-
         /// INFO fields to drop (if they exist)
         #[arg(short, long, value_delimiter = ',')]
         unwanted_info: Vec<String>,
@@ -39,6 +35,10 @@ enum Commands {
         /// SV VCF files to merge
         #[arg(num_args(1..))]
         vcf: Vec<String>,
+
+        #[command(flatten)]
+        options: Options
+
     },
 
 /*
@@ -61,18 +61,18 @@ async fn main() -> std::io::Result<()> {
         Commands::Merge {
             out,
             vcf,
-            force_alt_tags,
             unwanted_info,
             reference,
             write_merge_table,
+            options
         } => {
             merge_vcfs(
                 &out,
                 &vcf,
-                force_alt_tags,
                 &unwanted_info,
                 &reference,
                 &write_merge_table,
+                &options
             )
             .await?;
         }
