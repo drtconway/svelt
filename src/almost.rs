@@ -4,18 +4,12 @@ use datafusion::{
     arrow::datatypes::DataType,
     common::JoinType,
     functions_aggregate::count::count,
-    prelude::{DataFrame, SessionContext, abs, cast, col, lit},
+    prelude::{abs, cast, col, greatest, least, lit, DataFrame, SessionContext},
 };
 
-use crate::{
-    expressions::{ifelse, prefix_cols},
-    options::Options,
-    resolve::resolve_groups,
-};
-use crate::{
-    expressions::{pmax, pmin},
-    resolve::update_tables,
-};
+use crate::{expressions::{ifelse, prefix_cols}, options::Options, 
+    resolve::{resolve_groups, update_tables}}
+;
 
 pub async fn find_almost_exact(
     ctx: &SessionContext,
@@ -58,10 +52,10 @@ pub async fn find_almost_exact_non_bnd(
                     .and((col("lhs_vix_set") & col("rhs_vix_set")).eq(lit(0))),
             ),
         )?
-        .with_column("min_start", pmin(col("lhs_start"), col("rhs_start"))?)?
-        .with_column("max_start", pmax(col("lhs_start"), col("rhs_start"))?)?
-        .with_column("min_end", pmin(col("lhs_end"), col("rhs_end"))?)?
-        .with_column("max_end", pmax(col("lhs_end"), col("rhs_end"))?)?
+        .with_column("min_start", least(vec![col("lhs_start"), col("rhs_start")]))?
+        .with_column("max_start", greatest(vec![col("lhs_start"), col("rhs_start")]))?
+        .with_column("min_end", least(vec![col("lhs_end"), col("rhs_end")]))?
+        .with_column("max_end", greatest(vec![col("lhs_end"), col("rhs_end")]))?
         .with_column("start_displacement", col("max_start") - col("min_start"))?
         .with_column("end_displacement", col("max_end") - col("min_end"))?
         .with_column(
@@ -74,11 +68,11 @@ pub async fn find_almost_exact_non_bnd(
         )?
         .with_column(
             "max_abs_length",
-            pmax(col("lhs_abs_length"), col("rhs_abs_length"))?,
+            greatest(vec![col("lhs_abs_length"), col("rhs_abs_length")]),
         )?
         .with_column(
             "min_abs_length",
-            pmin(col("lhs_abs_length"), col("rhs_abs_length"))?,
+            least(vec![col("lhs_abs_length"), col("rhs_abs_length")]),
         )?
         .with_column(
             "length_ratio",
