@@ -10,11 +10,10 @@ use datafusion::arrow::{
 };
 use noodles::vcf::{
     Header,
-    variant::record::{AlternateBases, Record, info::field::Value},
+    variant::record::{AlternateBases, Record},
 };
 
 use crate::{
-    breakends::parse_breakend,
     chroms::ChromSet,
     errors::{SveltError, as_io_error},
     inputs::{get_breakend, get_svtype},
