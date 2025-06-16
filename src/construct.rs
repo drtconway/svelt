@@ -27,6 +27,31 @@ pub fn add_svelt_header_fields(
     unwanted_info: &Vec<String>,
 ) -> std::io::Result<()> {
     let infos = header.infos_mut();
+
+    if infos.get("CHR2").is_none() {
+        infos.insert(
+            String::from("CHR2"),
+            Builder::default()
+                .set_number(Number::Unknown)
+                .set_type(Type::String)
+                .set_description("Chromosome for end coordinate in case of a translocation")
+                .build()
+                .map_err(|e| Error::new(ErrorKind::Other, e))?,
+        );
+    }
+    
+    if infos.get("END2").is_none() {
+        infos.insert(
+            String::from("END2"),
+            Builder::default()
+                .set_number(Number::Unknown)
+                .set_type(Type::Integer)
+                .set_description("End position of the structural variant on CHR2")
+                .build()
+                .map_err(|e| Error::new(ErrorKind::Other, e))?,
+        );
+    }
+
     infos.insert(
         String::from("SVELT_CRITERIA"),
         Builder::default()
@@ -36,6 +61,7 @@ pub fn add_svelt_header_fields(
             .build()
             .map_err(|e| Error::new(ErrorKind::Other, e))?,
     );
+
     infos.insert(
         String::from("SVELT_ALT_SEQ"),
         Builder::default()
@@ -63,7 +89,7 @@ pub fn construct_record(
     alts: &Vec<Option<String>>,
     flip: bool,
     criteria: &str,
-    repo: &Option<Repository>
+    repo: &Option<Repository>,
 ) -> std::io::Result<RecordBuf> {
     let _ = header;
     let mut the_record = None;
@@ -77,7 +103,11 @@ pub fn construct_record(
 
     let mut chrom = String::from(the_record.reference_sequence_name());
 
-    let mut variant_start = the_record.variant_start().unwrap()?;
+    let mut variant_start = if let Some(start) = the_record.variant_start() {
+        start?.get()
+    } else {
+        0
+    };
 
     let mut ids = Vec::new();
     for id in the_record.ids().iter() {
@@ -89,19 +119,30 @@ pub fn construct_record(
     let mut reference_bases = reference_bases;
     let mut alternate_bases = alternate_bases;
 
+    let mut chrom2 = None;
+    let mut end2 = None;
+
     if flip {
         assert_eq!(alternate_bases.len(), 1);
-        let orig = BreakEnd::new(&chrom, variant_start.get(), &alternate_bases[0])
+        let orig = BreakEnd::new(&chrom, variant_start, &alternate_bases[0])
             .map_err(|e| Error::new(ErrorKind::Other, e))?;
         log::info!("unflipped: {:?}", orig);
         let flipped = orig.flip();
-        let flipped = flipped.format(repo.clone().unwrap())?;
-        log::info!("flipped: {:?}", flipped);
-        chrom = flipped.0;
-        variant_start = Position::try_from(flipped.1).unwrap();
-        reference_bases = String::from(flipped.2);
-        alternate_bases[0] = flipped.3;
+        let flipped_fmt = flipped.format(repo.clone().unwrap())?;
+        log::info!("flipped: {:?}", flipped_fmt);
+        chrom = flipped_fmt.0;
+        variant_start = flipped_fmt.1;
+        reference_bases = String::from(flipped_fmt.2);
+        alternate_bases[0] = flipped_fmt.3;
+        chrom2 = Some(flipped.chrom2.clone());
+        end2 = Some(flipped.end2);
     }
+
+    let variant_start = if variant_start > 0 {
+        Position::try_from(variant_start).unwrap()
+    } else {
+        Position::try_from(1).unwrap()
+    };
 
     let alternate_bases = AlternateBases::from(alternate_bases);
 
@@ -136,6 +177,20 @@ pub fn construct_record(
         let name = String::from(name);
         let value = value.map(make_info_value);
         info.push((name, value));
+    }
+    if let (Some(chrom2), Some(end2)) = (&chrom2, &end2) {
+        info = info
+            .into_iter()
+            .filter(|item| item.0 != "CHR2" && item.0 != "END2")
+            .collect();
+        info.push((
+            String::from("CHR2"),
+            Some(InfoValue::String(chrom2.clone())),
+        ));
+        info.push((
+            String::from("END2"),
+            Some(InfoValue::Integer(*end2 as i32)),
+        ));
     }
     if criteria.len() > 0 {
         let criteria: Vec<Option<String>> =

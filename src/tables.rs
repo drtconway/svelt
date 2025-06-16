@@ -6,18 +6,18 @@ use std::{
 use blake2::{Blake2b512, Digest};
 use datafusion::arrow::{
     array::{GenericStringBuilder, PrimitiveBuilder, RecordBatch, StringDictionaryBuilder},
-    datatypes::{
-        DataType, Field, Int32Type, Int64Type, Schema, UInt16Type, UInt32Type, UInt8Type
-    },
+    datatypes::{DataType, Field, Int32Type, Int64Type, Schema, UInt8Type, UInt16Type, UInt32Type},
 };
 use noodles::vcf::{
-    variant::record::{info::field::Value, AlternateBases, Record}, Header
+    Header,
+    variant::record::{AlternateBases, Record, info::field::Value},
 };
 
 use crate::{
     breakends::parse_breakend,
     chroms::ChromSet,
     errors::{SveltError, as_io_error},
+    inputs::{get_breakend, get_svtype},
     vcf_reader::VcfReader,
 };
 
@@ -58,30 +58,59 @@ pub fn load_vcf_core(reader: &mut VcfReader) -> std::io::Result<RecordBatch> {
     let mut seq_hash_builder = PrimitiveBuilder::<Int64Type>::new();
 
     for (rn, rec) in reader.reader.records().enumerate() {
+        log::debug!("processing record {}", rn);
         let rec = rec?;
 
         let chrom_id = chroms.index(rec.reference_sequence_name()).unwrap();
         let chrom = String::from(rec.reference_sequence_name());
-        let start = rec.variant_start().unwrap()?.get();
-        let end = rec.variant_end(header)?.get();
-        let kind = if let Some(Value::String(value)) = rec.info().get(header, "SVTYPE").unwrap()? {
-            Ok(String::from(value))
+
+        let start = if let Some(start) = rec.variant_start() {
+            start?.get()
         } else {
-            Err(SveltError::MissingType(
-                String::from(rec.reference_sequence_name()),
-                start,
-            ))
-        }
-        .map_err(as_io_error)?;
+            0
+        };
+
+        let end = if start > 0 {
+            rec.variant_end(header)?.get()
+        } else {
+            if let Some(value) = VcfReader::info_as_int(&rec, header, "END")? {
+                value as usize
+            } else if let Some(value) = VcfReader::info_as_int(&rec, header, "SVLEN")? {
+                start + (value as usize)
+            } else {
+                0
+            }
+        };
+
+        let kind = get_svtype(&rec, header)?;
+
         let length = if let Some(value) = VcfReader::info_as_int(&rec, header, "SVLEN")? {
             Some(value)
         } else {
             None
         };
+
+        let bnd = get_breakend(&rec)?;
+
         let chrom2 = if let Some(value) = VcfReader::info_as_str(&rec, header, "CHR2")? {
-            Ok(Some(String::from(value)))
+            if let Some(bnd) = &bnd {
+                if value != bnd.0 {
+                    Err(SveltError::BadChr2(
+                        chrom.clone(),
+                        start,
+                        bnd.0.clone(),
+                        value.clone(),
+                    ))
+                } else {
+                    Ok(Some(String::from(value)))
+                }
+            } else {
+                Ok(Some(String::from(value)))
+            }
         } else {
-            if kind == "BND" {
+            if let Some(bnd) = &bnd {
+                Ok(Some(bnd.0.clone()))
+            } else if kind == "BND" {
                 Err(SveltError::MissingChr2(
                     String::from(rec.reference_sequence_name()),
                     start,
@@ -97,10 +126,9 @@ pub fn load_vcf_core(reader: &mut VcfReader) -> std::io::Result<RecordBatch> {
             None
         };
         let end2: Option<u32> = if kind == "BND" {
-            if let Some(alt) = rec.alternate_bases().iter().next() {
-                let alt = alt?;
-                let (chr2, pos2, _here, _there) = parse_breakend(alt).map_err(as_io_error)?;
-                if &chr2 != chrom2.as_ref().unwrap() {
+            if let Some(bnd) = &bnd {
+                let (chr2, pos2, _here, _there) = bnd;
+                if chr2 != chrom2.as_ref().unwrap() {
                     Err(SveltError::BadChr2(
                         String::from(rec.reference_sequence_name()),
                         start,
@@ -108,7 +136,7 @@ pub fn load_vcf_core(reader: &mut VcfReader) -> std::io::Result<RecordBatch> {
                         chr2.clone(),
                     ))
                 } else {
-                    Ok(Some(pos2 as u32))
+                    Ok(Some(*pos2 as u32))
                 }
             } else {
                 Err(SveltError::MissingAlt(
@@ -120,21 +148,21 @@ pub fn load_vcf_core(reader: &mut VcfReader) -> std::io::Result<RecordBatch> {
             Ok(None)
         }
         .map_err(as_io_error)?;
-            let seq: Option<String> = if kind == "INS" {
-                if let Some(alt) = rec.alternate_bases().iter().next() {
-                    let alt = alt?;
-                    if is_seq(alt) {
-                        Ok(Some(String::from(&alt[1..])))
-                    } else {
-                        Ok(None)
-                    }
+        let seq: Option<String> = if kind == "INS" {
+            if let Some(alt) = rec.alternate_bases().iter().next() {
+                let alt = alt?;
+                if is_seq(alt) {
+                    Ok(Some(String::from(&alt[1..])))
                 } else {
                     Ok(None)
                 }
             } else {
                 Ok(None)
             }
-            .map_err(as_io_error)?;
+        } else {
+            Ok(None)
+        }
+        .map_err(as_io_error)?;
         let seq_hash = if kind == "INS" {
             if let Some(alt) = rec.alternate_bases().iter().next() {
                 let alt = alt?;

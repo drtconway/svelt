@@ -45,12 +45,12 @@ pub fn parse_breakend(
 
 #[derive(Debug)]
 pub struct BreakEnd {
-    chrom: String,
-    end: usize,
-    side: BreakEndSide,
-    chrom2: String,
-    end2: usize,
-    side2: BreakEndSide,
+    pub chrom: String,
+    pub end: usize,
+    pub side: BreakEndSide,
+    pub chrom2: String,
+    pub end2: usize,
+    pub side2: BreakEndSide,
 }
 
 impl BreakEnd {
