@@ -79,8 +79,7 @@ pub async fn near_merge_table(tbl: DataFrame) -> std::io::Result<RecordBatch> {
         if lhs_start <= rhs_start {
             while let Some(rhs_item) = rhs_heap.front() {
                 if rhs_item.start + 25 < lhs_start {
-                    let x = rhs_heap.pop();
-                    //log::info!("popped rhs: {:?}", x);
+                    rhs_heap.pop();
                 } else {
                     break;
                 }
@@ -110,8 +109,7 @@ pub async fn near_merge_table(tbl: DataFrame) -> std::io::Result<RecordBatch> {
         } else {
             while let Some(lhs_item) = lhs_heap.front() {
                 if lhs_item.start + 25 < rhs_start {
-                    let x = lhs_heap.pop();
-                    //log::info!("popped lhs: {:?}", x);
+                    lhs_heap.pop();
                 } else {
                     break;
                 }
