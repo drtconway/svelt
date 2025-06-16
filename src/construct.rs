@@ -39,7 +39,7 @@ pub fn add_svelt_header_fields(
                 .map_err(|e| Error::new(ErrorKind::Other, e))?,
         );
     }
-    
+
     if infos.get("END2").is_none() {
         infos.insert(
             String::from("END2"),
@@ -119,9 +119,6 @@ pub fn construct_record(
     let mut reference_bases = reference_bases;
     let mut alternate_bases = alternate_bases;
 
-    let mut chrom2 = None;
-    let mut end2 = None;
-
     if flip {
         assert_eq!(alternate_bases.len(), 1);
         let orig = BreakEnd::new(&chrom, variant_start, &alternate_bases[0])
@@ -134,8 +131,6 @@ pub fn construct_record(
         variant_start = flipped_fmt.1;
         reference_bases = String::from(flipped_fmt.2);
         alternate_bases[0] = flipped_fmt.3;
-        chrom2 = Some(flipped.chrom2.clone());
-        end2 = Some(flipped.end2);
     }
 
     let variant_start = if variant_start > 0 {
@@ -143,6 +138,14 @@ pub fn construct_record(
     } else {
         Position::try_from(1).unwrap()
     };
+
+    let mut chrom2 = None;
+    let mut end2 = None;
+    if let Ok(bnd) = BreakEnd::new(&chrom, variant_start.get(), &alternate_bases[0]) {
+        chrom2 = Some(bnd.chrom2.clone());
+        end2 = Some(bnd.end2);
+    }
+
 
     let alternate_bases = AlternateBases::from(alternate_bases);
 
