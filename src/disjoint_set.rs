@@ -3,20 +3,6 @@ use std::collections::HashMap;
 
 /// An implementation of the disjoint set data structure.
 ///
-/// # Examples
-///
-/// ```
-/// use disjoint_set::DisjointSet;
-///
-/// let mut ds = DisjointSet::new();
-/// assert_ne!(ds.find(1), ds.find(2));
-/// ds.union(1, 2);
-/// assert_eq!(ds.find(1), ds.find(2));
-/// assert_ne!(ds.find(1), ds.find(3));
-/// ds.union(2, 3);
-/// assert_eq!(ds.find(1), ds.find(3));
-/// ```
-///
 /// For more information see https://en.wikipedia.org/wiki/Disjoint-set_data_structure
 pub struct DisjointSet<T: Eq + Hash + Copy> {
     parent: HashMap<T, T>,

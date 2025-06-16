@@ -4,12 +4,15 @@ use datafusion::{
     arrow::datatypes::DataType,
     common::JoinType,
     functions_aggregate::count::count,
-    prelude::{abs, cast, col, greatest, least, lit, DataFrame, SessionContext},
+    prelude::{DataFrame, SessionContext, abs, cast, col, greatest, least, lit},
 };
 
-use crate::{expressions::{ifelse, prefix_cols}, options::Options, 
-    resolve::{resolve_groups, update_tables}}
-;
+use crate::{
+    expressions::{ifelse, prefix_cols},
+    near_merge::near_merge_table,
+    options::Options,
+    resolve::{resolve_groups, update_tables},
+};
 
 pub async fn find_almost_exact(
     ctx: &SessionContext,
@@ -28,6 +31,16 @@ pub async fn find_almost_exact_non_bnd(
     options: &Options,
 ) -> std::io::Result<DataFrame> {
     log::info!("resolving non-BND inexact matches");
+    if false {
+        // WIP code for ~linear range join.
+        let x = near_merge_table(tbl.clone()).await?;
+        let x = ctx
+            .read_batch(x)
+            .map_err(|e| Error::new(ErrorKind::Other, e))?;
+        x.sort_by(vec![col("lhs_row_id"), col("rhs_row_id")])?
+            .show()
+            .await?;
+    }
 
     let candidates = tbl
         .clone()
@@ -53,7 +66,10 @@ pub async fn find_almost_exact_non_bnd(
             ),
         )?
         .with_column("min_start", least(vec![col("lhs_start"), col("rhs_start")]))?
-        .with_column("max_start", greatest(vec![col("lhs_start"), col("rhs_start")]))?
+        .with_column(
+            "max_start",
+            greatest(vec![col("lhs_start"), col("rhs_start")]),
+        )?
         .with_column("min_end", least(vec![col("lhs_end"), col("rhs_end")]))?
         .with_column("max_end", greatest(vec![col("lhs_end"), col("rhs_end")]))?
         .with_column("start_displacement", col("max_start") - col("min_start"))?
