@@ -8,7 +8,7 @@ use datafusion::{
 
 use crate::{
     expressions::prefix_cols,
-    options::Options,
+    options::MergeOptions,
     resolve::{resolve_groups, update_tables},
 };
 
@@ -16,7 +16,7 @@ pub async fn find_exact(
     ctx: &SessionContext,
     tbl: DataFrame,
     n: u32,
-    options: &Options,
+    options: &MergeOptions,
 ) -> std::io::Result<DataFrame> {
     let tbl = find_exact_non_bnd(ctx, tbl, n, options).await?;
     find_exact_bnd(ctx, tbl, n, options).await
@@ -26,7 +26,7 @@ pub async fn find_exact_non_bnd(
     ctx: &SessionContext,
     tbl: DataFrame,
     n: u32,
-    _options: &Options,
+    _options: &MergeOptions,
 ) -> std::io::Result<DataFrame> {
     log::info!("resolving exact non-BND matches");
 
@@ -101,7 +101,7 @@ pub async fn find_exact_bnd(
     ctx: &SessionContext,
     tbl: DataFrame,
     n: u32,
-    _options: &Options,
+    _options: &MergeOptions,
 ) -> std::io::Result<DataFrame> {
     log::info!("resolving exact BND matches");
 

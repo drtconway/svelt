@@ -13,7 +13,7 @@ use datafusion::{
 use crate::{
     expressions::{ifelse, prefix_cols},
     near_merge::near_merge_table,
-    options::Options,
+    options::MergeOptions,
     range_joins::overlap_join,
     resolve::{resolve_groups, update_tables},
 };
@@ -22,7 +22,7 @@ pub async fn find_almost_exact(
     ctx: &SessionContext,
     tbl: DataFrame,
     n: u32,
-    options: &Options,
+    options: &MergeOptions,
 ) -> std::io::Result<DataFrame> {
     let tbl = find_almost_exact_non_bnd(ctx, tbl, n, options).await?;
     find_almost_exact_bnd(ctx, tbl, n, options).await
@@ -32,7 +32,7 @@ pub async fn find_almost_exact_non_bnd(
     ctx: &SessionContext,
     tbl: DataFrame,
     n: u32,
-    options: &Options,
+    options: &MergeOptions,
 ) -> std::io::Result<DataFrame> {
     log::info!("resolving non-BND inexact matches");
     if true {
@@ -278,7 +278,7 @@ pub async fn find_almost_exact_bnd(
     ctx: &SessionContext,
     tbl: DataFrame,
     n: u32,
-    options: &Options,
+    options: &MergeOptions,
 ) -> std::io::Result<DataFrame> {
     log::info!("resolving BND inexact matches");
 

@@ -1,8 +1,9 @@
 use clap::{ArgAction, Args};
+use datafusion::prelude::{SessionConfig, SessionContext};
 
 /// Options controlling the merge process
 #[derive(Debug, Args)]
-pub struct Options {
+pub struct MergeOptions {
     /// Allowed distance for merging of events
     #[arg(long, required = false, default_value = "25")]
     pub position_window: u32,
@@ -30,4 +31,19 @@ pub struct Options {
         default_missing_value = "true",
         num_args = 0..=1,)]
     pub allow_breakend_flipping: bool,
+}
+
+/// Options common to all commands
+#[derive(Debug, Args)]
+pub struct CommonOptions {
+    /// Number of threads to use (0 to use all available)
+    #[arg(long, required = false, default_value = "4")]
+    pub threads: usize,
+}
+
+pub fn make_session_context(options: &CommonOptions) -> SessionContext {
+    let mut cfg = SessionConfig::new();
+    cfg.options_mut().execution.target_partitions = options.threads;
+
+    SessionContext::new_with_config(cfg)
 }

@@ -7,7 +7,7 @@ use datafusion::{
 
 use crate::{
     expressions::prefix_cols,
-    options::Options,
+    options::MergeOptions,
     resolve::{resolve_groups, update_tables},
 };
 
@@ -15,7 +15,7 @@ pub async fn find_backwards_bnds(
     ctx: &SessionContext,
     tbl: DataFrame,
     n: u32,
-    options: &Options,
+    options: &MergeOptions,
 ) -> std::io::Result<DataFrame> {
     log::info!("resolving backward BND inexact matches");
 

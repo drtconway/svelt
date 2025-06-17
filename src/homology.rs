@@ -12,16 +12,19 @@ use datafusion::{
     },
     config::CsvOptions,
     dataframe::DataFrameWriteOptions,
-    prelude::{SessionContext, col},
+    prelude::col,
 };
 use itertools::Itertools;
 use noodles::fasta;
 
-use crate::kmers::Kmer;
+use crate::{
+    kmers::Kmer,
+    options::{CommonOptions, make_session_context},
+};
 
 const K: usize = 11;
 
-pub async fn index_features(features_name: &str) -> std::io::Result<()> {
+pub async fn index_features(features_name: &str, out: &str, common: &CommonOptions) -> std::io::Result<()> {
     let reader = autodetect_open(features_name)?;
     let reader = BufReader::new(reader);
     let mut reader = fasta::io::reader::Builder::default().build_from_reader(reader)?;
@@ -86,7 +89,7 @@ pub async fn index_features(features_name: &str) -> std::io::Result<()> {
     )
     .map_err(|e| Error::new(ErrorKind::Other, e))?;
 
-    let ctx = SessionContext::new();
+    let ctx = make_session_context(common);
     let df = ctx.read_batch(recs)?;
 
     let opts = DataFrameWriteOptions::default();
@@ -94,13 +97,13 @@ pub async fn index_features(features_name: &str) -> std::io::Result<()> {
     let csv_opts = Some(csv_opts);
 
     df.sort_by(vec![col("kmer"), col("seq_num")])?
-        .write_csv("feature-index.tsv", opts, csv_opts)
+        .write_csv(out, opts, csv_opts)
         .await?;
 
     Ok(())
 }
 
-fn dot(lhs: &Vec<(u64, usize)>, rhs: &Vec<(u64, usize)>) -> f64 {
+fn _dot(lhs: &Vec<(u64, usize)>, rhs: &Vec<(u64, usize)>) -> f64 {
     let mut i = 0;
     let mut j = 0;
     let mut d = 0.0;

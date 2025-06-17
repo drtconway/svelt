@@ -11,7 +11,7 @@ use datafusion::{
     },
     config::CsvOptions,
     dataframe::DataFrameWriteOptions,
-    prelude::{DataFrame, SessionContext, cast, col, lit, nullif, to_hex},
+    prelude::{DataFrame, cast, col, lit, nullif, to_hex},
 };
 use noodles::{
     fasta::{self, repository::adapters::IndexedReader},
@@ -24,7 +24,7 @@ use crate::{
     chroms::ChromSet,
     construct::{add_svelt_header_fields, construct_record},
     exact::find_exact,
-    options::Options,
+    options::{make_session_context, CommonOptions, MergeOptions},
     record_seeker::RecordSeeker,
     row_key::RowKey,
     tables::load_vcf_core,
@@ -37,7 +37,8 @@ pub async fn merge_vcfs(
     unwanted_info: &Vec<String>,
     reference: &Option<String>,
     write_merge_table: &Option<String>,
-    options: &Options
+    options: &MergeOptions,
+    common: &CommonOptions
 ) -> std::io::Result<()> {
     let chroms = load_chroms(&vcf[0])?;
     let chroms = Rc::new(chroms);
@@ -48,7 +49,7 @@ pub async fn merge_vcfs(
     }
     let n = readers.len();
 
-    let ctx = SessionContext::new();
+    let ctx = make_session_context(common);
 
     let mut acc: Option<DataFrame> = None;
     for vix in 0..readers.len() {
