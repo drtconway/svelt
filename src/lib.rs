@@ -13,6 +13,7 @@ pub mod merge;
 pub mod near_merge;
 pub mod nearest;
 pub mod options;
+pub mod range_joins;
 pub mod record_seeker;
 pub mod resolve;
 pub mod row_key;
