@@ -1,6 +1,5 @@
-
 use clap::{Parser, Subcommand};
-use svelt::{merge::merge_vcfs, options::Options};
+use svelt::{homology::index_features, merge::merge_vcfs, options::Options};
 
 /// Structuaral Variant (SV) VCF merging
 #[derive(Debug, Parser)]
@@ -37,18 +36,15 @@ enum Commands {
         vcf: Vec<String>,
 
         #[command(flatten)]
-        options: Options
-
+        options: Options,
     },
 
-/*
     /// Index a set of features for annotating homology
     #[command(arg_required_else_help = true)]
     IndexFeatures {
         /// FASTA file with feature sequences
         features: String,
     },
-*/
 }
 
 #[tokio::main]
@@ -64,7 +60,7 @@ async fn main() -> std::io::Result<()> {
             unwanted_info,
             reference,
             write_merge_table,
-            options
+            options,
         } => {
             merge_vcfs(
                 &out,
@@ -72,10 +68,13 @@ async fn main() -> std::io::Result<()> {
                 &unwanted_info,
                 &reference,
                 &write_merge_table,
-                &options
+                &options,
             )
             .await?;
         }
+        Commands::IndexFeatures { features } => {
+            index_features(&features).await?;
+        },
     }
     Ok(())
 }
