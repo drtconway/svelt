@@ -14,7 +14,7 @@ use datafusion::{
     config::{ParquetColumnOptions, TableParquetOptions},
     dataframe::DataFrameWriteOptions,
     functions_aggregate::sum::sum,
-    prelude::{coalesce, col, lit, sqrt, DataFrame, ParquetReadOptions, SessionContext},
+    prelude::{DataFrame, ParquetReadOptions, SessionContext, col, lit, sqrt},
 };
 use itertools::Itertools;
 use noodles::fasta;
@@ -210,8 +210,7 @@ pub async fn find_similar(
         .map(|(x, xs)| (x, xs.count()))
         .collect();
     let fwd = kmer_frequencies_to_table(&fwd, &ctx).await?;
-
-    idx.rank(fwd).await?;
+    let fwd = idx.rank(fwd).await?.with_column("strand", lit("+"))?;
 
     rev.sort();
     let rev: Vec<(u64, usize)> = rev
@@ -221,6 +220,13 @@ pub async fn find_similar(
         .map(|(x, xs)| (x, xs.count()))
         .collect();
     let rev = kmer_frequencies_to_table(&rev, &ctx).await?;
+    let rev = idx.rank(rev).await?.with_column("strand", lit("-"))?;
+
+    fwd
+        .union(rev)?
+        .sort(vec![col("dot").sort(false, false)])?
+        .show()
+        .await?;
 
     Ok(())
 }
@@ -264,14 +270,17 @@ impl FeatureIndex {
         })
     }
 
-    pub async fn rank(&self, other: DataFrame) -> std::io::Result<()> {
-
-        let mag = other.clone().aggregate(
-            vec![],
-            vec![sum(col("count") * col("count")).alias("mag")],
-        )?
-        .with_column("mag", sqrt(col("mag")))?;
-        let mag = mag.collect().await?[0].column(0).as_any().downcast_ref::<Float64Array>().unwrap().value(0);
+    pub async fn rank(&self, other: DataFrame) -> std::io::Result<DataFrame> {
+        let mag = other
+            .clone()
+            .aggregate(vec![], vec![sum(col("count") * col("count")).alias("mag")])?
+            .with_column("mag", sqrt(col("mag")))?;
+        let mag = mag.collect().await?[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap()
+            .value(0);
 
         let tbl = self.kmers.clone().join(
             other.clone(),
@@ -306,7 +315,7 @@ impl FeatureIndex {
                 None,
             )?
             .drop_columns(&["idx_nix"])?
-                .with_column("mag", lit(mag))?
+            .with_column("mag", lit(mag))?
             .with_column(
                 "dot",
                 col("raw_dot") * lit(1.0) / (col("idx_mag") * col("mag")),
@@ -328,7 +337,7 @@ impl FeatureIndex {
                 .await?;
         }
 
-        Ok(())
+        Ok(tbl)
     }
 }
 
