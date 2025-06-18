@@ -7,24 +7,29 @@ use std::{
 use autocompress::autodetect_open;
 use datafusion::{
     arrow::{
-        array::{PrimitiveBuilder, RecordBatch},
+        array::{PrimitiveBuilder, RecordBatch, StringDictionaryBuilder},
         datatypes::{DataType, Field, Schema, UInt32Type, UInt64Type},
     },
-    config::CsvOptions,
+    config::{ParquetColumnOptions, TableParquetOptions},
     dataframe::DataFrameWriteOptions,
     prelude::col,
 };
 use itertools::Itertools;
 use noodles::fasta;
+use regex::Regex;
 
 use crate::{
+    either::Either::{self, Left, Right},
     kmers::Kmer,
-    options::{CommonOptions, make_session_context},
+    options::{CommonOptions, IndexingOptions, make_session_context},
 };
 
-const K: usize = 11;
-
-pub async fn index_features(features_name: &str, out: &str, common: &CommonOptions) -> std::io::Result<()> {
+pub async fn index_features(
+    features_name: &str,
+    out: &str,
+    options: &IndexingOptions,
+    common: &CommonOptions,
+) -> std::io::Result<()> {
     let reader = autodetect_open(features_name)?;
     let reader = BufReader::new(reader);
     let mut reader = fasta::io::reader::Builder::default().build_from_reader(reader)?;
@@ -43,7 +48,7 @@ pub async fn index_features(features_name: &str, out: &str, common: &CommonOptio
         name_index.insert(name, n);
 
         let mut fwd = Vec::new();
-        Kmer::with_many_both(K, rec.sequence(), |x, _y| {
+        Kmer::with_many_both(options.k, rec.sequence(), |x, _y| {
             fwd.push(x.0);
         });
         fwd.sort();
@@ -57,47 +62,125 @@ pub async fn index_features(features_name: &str, out: &str, common: &CommonOptio
         }
     }
 
+    let ctx = make_session_context(common);
+
+
+    let rx = Regex::new(&options.pattern).map_err(|e| Error::new(ErrorKind::Other, e))?;
+    let nm: Either<usize, String> = if let Ok(x) = options.name.parse() {
+        Left(x)
+    } else {
+        Right(options.name.clone())
+    };
+    let cls: Either<usize, String> = if let Ok(x) = options.class.parse() {
+        Left(x)
+    } else {
+        Right(options.class.clone())
+    };
+
+    // Write out the names
+
+    let mut name_builder = StringDictionaryBuilder::<UInt32Type>::new();
+    let mut class_builder = StringDictionaryBuilder::<UInt32Type>::new();
+    let mut nix_builder = PrimitiveBuilder::<UInt32Type>::new();
+
+    for (orig, nix) in name_index.into_iter() {
+        if let Some(m) = rx.captures(&orig) {
+            let name = match &nm {
+                Left(n) => String::from(&m[*n]),
+                Right(v) => String::from(&m[v as &str]),
+            };
+            let class = match &cls {
+                Left(n) => String::from(&m[*n]),
+                Right(v) => String::from(&m[v as &str]),
+            };
+            name_builder.append_value(name);
+            class_builder.append_value(class);
+            nix_builder.append_value(nix as u32);
+        } else {
+            log::warn!("Couldn't parse feature sequence name: '{}'", orig);
+            name_builder.append_value(orig);
+            class_builder.append_value(String::from("<unknown>"));
+            nix_builder.append_value(nix as u32);
+
+        }
+    }
+
+    let name_array = name_builder.finish();
+    let class_array = class_builder.finish();
+    let nix_array = nix_builder.finish();
+
+    let name_schema = Arc::new(Schema::new(vec![
+        Field::new_dictionary("name", DataType::UInt32, DataType::Utf8, false),
+        Field::new_dictionary("class", DataType::UInt32, DataType::Utf8, false),
+        Field::new("nix", DataType::UInt32, false),
+    ]));
+
+    let recs = RecordBatch::try_new(
+        name_schema,
+        vec![
+            Arc::new(name_array),
+            Arc::new(class_array),
+            Arc::new(nix_array),
+        ],
+    )
+    .map_err(|e| Error::new(ErrorKind::Other, e))?;
+
+    let df = ctx.read_batch(recs)?;
+
+    let opts = DataFrameWriteOptions::default();
+
+    df.sort_by(vec![col("class"), col("name")])?
+    .write_parquet(&format!("{}.nidx", out), opts, None)
+    .await?;
+
+
+    // Write out the kmer index
+
     let mut kmer_builder = PrimitiveBuilder::<UInt64Type>::new();
-    let mut seq_num_builder = PrimitiveBuilder::<UInt32Type>::new();
+    let mut nix_builder = PrimitiveBuilder::<UInt32Type>::new();
     let mut count_builder = PrimitiveBuilder::<UInt32Type>::new();
 
     for (x, postings) in kmer_index.into_iter() {
         for (n, c) in postings.into_iter() {
             kmer_builder.append_value(x);
-            seq_num_builder.append_value(n as u32);
+            nix_builder.append_value(n as u32);
             count_builder.append_value(c as u32);
         }
     }
 
     let kmer_array = kmer_builder.finish();
-    let seq_num_array = seq_num_builder.finish();
+    let nix_array = nix_builder.finish();
     let count_array = count_builder.finish();
 
-    let schema = Arc::new(Schema::new(vec![
+    let kmer_schema = Arc::new(Schema::new(vec![
         Field::new("kmer", DataType::UInt64, false),
         Field::new("seq_num", DataType::UInt32, false),
         Field::new("count", DataType::UInt32, false),
     ]));
 
     let recs = RecordBatch::try_new(
-        schema,
+        kmer_schema,
         vec![
             Arc::new(kmer_array),
-            Arc::new(seq_num_array),
+            Arc::new(nix_array),
             Arc::new(count_array),
         ],
     )
     .map_err(|e| Error::new(ErrorKind::Other, e))?;
 
-    let ctx = make_session_context(common);
     let df = ctx.read_batch(recs)?;
 
     let opts = DataFrameWriteOptions::default();
-    let csv_opts = CsvOptions::default().with_delimiter(b'\t');
-    let csv_opts = Some(csv_opts);
+
+    let mut kidx_opts = TableParquetOptions::default();
+    let mut kmer_opts = ParquetColumnOptions::default();
+    kmer_opts.compression = Some(String::from("zstd(19)"));
+    kidx_opts
+        .column_specific_options
+        .insert(String::from("kmer"), kmer_opts);
 
     df.sort_by(vec![col("kmer"), col("seq_num")])?
-        .write_csv(out, opts, csv_opts)
+        .write_parquet(&format!("{}.kidx", out), opts, Some(kidx_opts))
         .await?;
 
     Ok(())

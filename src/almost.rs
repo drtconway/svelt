@@ -48,8 +48,30 @@ pub async fn find_almost_exact_non_bnd(
             .read_batch(middle)
             .map_err(|e| Error::new(ErrorKind::Other, e))?;
 
+        if false {
+            middle
+                .clone()
+                .sort_by(vec![col("lhs_merge_row_id"), col("rhs_merge_row_id")])?
+                .show()
+                .await?;
+        }
+
         let lhs = prefix_cols(candidates.clone(), "lhs")?;
         let rhs = prefix_cols(candidates.clone(), "rhs")?;
+
+        if false {
+            lhs.clone()
+                .drop_columns(&[
+                    "lhs_chrom",
+                    "lhs_chrom2_id",
+                    "lhs_chrom2",
+                    "lhs_end2",
+                    "lhs_alt_seq",
+                ])?
+                .sort_by(vec![col("lhs_chrom_id"), col("lhs_start"), col("lhs_end")])?
+                .show()
+                .await?;
+        }
 
         let almost_exact = lhs
             .join(
@@ -66,6 +88,41 @@ pub async fn find_almost_exact_non_bnd(
                 &["rhs_row_id"],
                 None,
             )?
+            .with_column(
+                "length_ratio",
+                (lit(1.0) * least(vec![col("lhs_abs_length"), col("rhs_abs_length")]))
+                    / greatest(vec![col("lhs_abs_length"), col("rhs_abs_length")]),
+            )?;
+
+        if false {
+            almost_exact
+                .clone()
+                .with_column(
+                    "start_displacement",
+                    abs(col("lhs_start") - col("rhs_start")),
+                )?
+                .with_column(
+                    "end_displacement",
+                    abs(col("lhs_end") - col("rhs_end")),
+                )?
+                .drop_columns(&[
+                    "lhs_chrom",
+                    "lhs_chrom2_id",
+                    "lhs_chrom2",
+                    "lhs_end2",
+                    "lhs_alt_seq",
+                    "rhs_chrom",
+                    "rhs_chrom2_id",
+                    "rhs_chrom2",
+                    "rhs_end2",
+                    "rhs_alt_seq",
+                ])?
+                .sort_by(vec![col("lhs_chrom_id"), col("lhs_start"), col("lhs_end")])?
+                .show()
+                .await?;
+        }
+
+        let almost_exact = almost_exact
             .filter(
                 lit(true)
                     .and(col("lhs_row_id").lt(col("rhs_row_id")))
@@ -73,16 +130,7 @@ pub async fn find_almost_exact_non_bnd(
                     .and((col("lhs_vix_set") & col("rhs_vix_set")).eq(lit(0)))
                     .and(abs(col("lhs_start") - col("rhs_start")).lt(lit(options.position_window)))
                     .and(abs(col("lhs_end") - col("rhs_end")).lt(lit(options.position_window)))
-                    .and(
-                        ((lit(1.0) * least(vec![col("lhs_abs_length"), col("rhs_abs_length")]))
-                            / greatest(vec![col("lhs_abs_length"), col("rhs_abs_length")]))
-                        .gt_eq(lit(options.length_ratio)),
-                    ),
-            )?
-            .with_column(
-                "length_ratio",
-                (lit(1.0) * least(vec![col("lhs_abs_length"), col("rhs_abs_length")]))
-                    / greatest(vec![col("lhs_abs_length"), col("rhs_abs_length")]),
+                    .and(col("length_ratio").gt_eq(lit(options.length_ratio))),
             )?
             .sort(vec![
                 (col("lhs_vix_count") + col("rhs_vix_count")).sort(false, false),
@@ -90,6 +138,25 @@ pub async fn find_almost_exact_non_bnd(
                 col("lhs_row_key").sort(true, false),
                 col("rhs_row_key").sort(true, false),
             ])?;
+
+        if false {
+            almost_exact
+                .clone()
+                .drop_columns(&[
+                    "lhs_chrom",
+                    "lhs_chrom2_id",
+                    "lhs_chrom2",
+                    "lhs_end2",
+                    "lhs_alt_seq",
+                    "rhs_chrom",
+                    "rhs_chrom2_id",
+                    "rhs_chrom2",
+                    "rhs_end2",
+                    "rhs_alt_seq",
+                ])?
+                .show()
+                .await?;
+        }
 
         let resolution = resolve_groups(almost_exact).await?;
         let resolution = ctx

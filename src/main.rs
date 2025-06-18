@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use svelt::{homology::index_features, merge::merge_vcfs, options::{CommonOptions, MergeOptions}};
+use svelt::{homology::index_features, merge::merge_vcfs, options::{CommonOptions, IndexingOptions, MergeOptions}};
 
 /// Structuaral Variant (SV) VCF merging
 #[derive(Debug, Parser)]
@@ -54,6 +54,9 @@ enum Commands {
         out: String,
 
         #[command(flatten)]
+        options: IndexingOptions,
+
+        #[command(flatten)]
         common: CommonOptions
     },
 }
@@ -85,8 +88,8 @@ async fn main() -> std::io::Result<()> {
             )
             .await?;
         }
-        Commands::IndexFeatures { out, features, common } => {
-            index_features(&features, &out, &common).await?;
+        Commands::IndexFeatures { out, features, options, common } => {
+            index_features(&features, &out, &options, &common).await?;
         },
     }
     Ok(())

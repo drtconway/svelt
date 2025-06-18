@@ -6,12 +6,12 @@ use std::{
 use datafusion::{
     arrow::{
         array::{
-            Array, DictionaryArray, GenericByteArray, Int64Array, PrimitiveArray, PrimitiveBuilder,
-            RecordBatch, StringArray, UInt16Array, UInt32Array,
+            Array, DictionaryArray, GenericByteArray, Int32Array, Int64Array, PrimitiveArray,
+            PrimitiveBuilder, RecordBatch, StringArray, UInt16Array,
         },
         datatypes::{
-            DataType, Field, GenericStringType, Int64Type, Schema, UInt8Type, UInt16Type,
-            UInt32Type,
+            DataType, Field, GenericStringType, Int32Type, Int64Type, Schema, UInt8Type,
+            UInt16Type, UInt32Type,
         },
     },
     prelude::{DataFrame, col, lit},
@@ -266,8 +266,8 @@ struct MergeIterator<'a> {
     kind: &'a DictionaryArray<UInt8Type>,
     kind_values: &'a GenericByteArray<GenericStringType<i32>>,
     chrom_id: &'a PrimitiveArray<UInt16Type>,
-    start: &'a PrimitiveArray<UInt32Type>,
-    end: &'a PrimitiveArray<UInt32Type>,
+    start: &'a PrimitiveArray<Int32Type>,
+    end: &'a PrimitiveArray<Int32Type>,
     row_id: &'a PrimitiveArray<Int64Type>,
     i: usize,
 }
@@ -281,8 +281,8 @@ impl<'a> MergeIterator<'a> {
             .downcast_ref::<StringArray>()
             .unwrap();
         let chrom_id = Self::get_array::<UInt16Array>(recs, "chrom_id");
-        let start = Self::get_array::<UInt32Array>(recs, "start");
-        let end = Self::get_array::<UInt32Array>(recs, "end");
+        let start = Self::get_array::<Int32Array>(recs, "start");
+        let end = Self::get_array::<Int32Array>(recs, "end");
         let row_id = Self::get_array::<Int64Array>(recs, "row_id");
         MergeIterator {
             kind,
@@ -328,13 +328,13 @@ impl<'a> Iterator for MergeIterator<'a> {
 struct Row<'a> {
     kind: &'a str,
     chrom_id: u16,
-    start: u32,
-    end: u32,
+    start: i32,
+    end: i32,
     row_id: i64,
 }
 
 impl<'a> Row<'a> {
-    pub fn new(kind: &'a str, chrom_id: u16, start: u32, end: u32, row_id: i64) -> Row<'a> {
+    pub fn new(kind: &'a str, chrom_id: u16, start: i32, end: i32, row_id: i64) -> Row<'a> {
         Row {
             kind,
             chrom_id,
@@ -346,7 +346,7 @@ impl<'a> Row<'a> {
 }
 
 impl<'a> HeapItem for Row<'a> {
-    type KeyType = u32;
+    type KeyType = i32;
 
     fn key(&self) -> Self::KeyType {
         self.start

@@ -33,6 +33,26 @@ pub struct MergeOptions {
     pub allow_breakend_flipping: bool,
 }
 
+/// Options controlling feature indexing
+#[derive(Debug, Args)]
+pub struct IndexingOptions {
+    /// k-mer length
+     #[arg(short, long, required = false, default_value = "11")]
+    pub k: usize,
+
+    /// Regular expression for parsing names
+     #[arg(long, required = false, default_value = "^(?<name>[[:word:]]+)[[:blank:]]+(?<class>[[:word:]]+)")]
+    pub pattern: String,
+
+    /// Reference to get the name (number for group number, or name for named group)
+    #[arg(long, required = false, default_value = "name")]
+    pub name: String,
+
+    /// Reference to get the class (number for group number, or name for named group)
+    #[arg(long, required = false, default_value = "class")]
+    pub class: String,
+}
+
 /// Options common to all commands
 #[derive(Debug, Args)]
 pub struct CommonOptions {

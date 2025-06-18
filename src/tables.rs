@@ -26,13 +26,13 @@ pub fn vcf_core_schema() -> Arc<Schema> {
         Field::new("row_num", DataType::UInt32, false),
         Field::new("chrom_id", DataType::UInt16, false),
         Field::new_dictionary("chrom", DataType::UInt16, DataType::Utf8, false),
-        Field::new("start", DataType::UInt32, false),
-        Field::new("end", DataType::UInt32, false),
+        Field::new("start", DataType::Int32, false),
+        Field::new("end", DataType::Int32, false),
         Field::new_dictionary("kind", DataType::UInt8, DataType::Utf8, false),
         Field::new("length", DataType::Int32, true),
         Field::new("chrom2_id", DataType::UInt16, true),
         Field::new_dictionary("chrom2", DataType::UInt16, DataType::Utf8, true),
-        Field::new("end2", DataType::UInt32, true),
+        Field::new("end2", DataType::Int32, true),
         Field::new("alt_seq", DataType::Utf8, true),
         Field::new("seq_hash", DataType::Int64, true),
     ]))
@@ -46,13 +46,13 @@ pub fn load_vcf_core(reader: &mut VcfReader) -> std::io::Result<RecordBatch> {
     let mut row_num_builder = PrimitiveBuilder::<UInt32Type>::new();
     let mut chrom_id_builder = PrimitiveBuilder::<UInt16Type>::new();
     let mut chrom_builder = StringDictionaryBuilder::<UInt16Type>::new();
-    let mut start_builder = PrimitiveBuilder::<UInt32Type>::new();
-    let mut end_builder = PrimitiveBuilder::<UInt32Type>::new();
+    let mut start_builder = PrimitiveBuilder::<Int32Type>::new();
+    let mut end_builder = PrimitiveBuilder::<Int32Type>::new();
     let mut kind_builder = StringDictionaryBuilder::<UInt8Type>::new();
     let mut length_builder = PrimitiveBuilder::<Int32Type>::new();
     let mut chrom2_id_builder = PrimitiveBuilder::<UInt16Type>::new();
     let mut chrom2_builder = StringDictionaryBuilder::<UInt16Type>::new();
-    let mut end2_builder = PrimitiveBuilder::<UInt32Type>::new();
+    let mut end2_builder = PrimitiveBuilder::<Int32Type>::new();
     let mut alt_seq_builder = GenericStringBuilder::<i32>::new();
     let mut seq_hash_builder = PrimitiveBuilder::<Int64Type>::new();
 
@@ -69,7 +69,7 @@ pub fn load_vcf_core(reader: &mut VcfReader) -> std::io::Result<RecordBatch> {
             0
         };
 
-        let end = if start > 0 {
+        let mut end = if start > 0 {
             rec.variant_end(header)?.get()
         } else {
             if let Some(value) = VcfReader::info_as_int(&rec, header, "END")? {
@@ -88,6 +88,14 @@ pub fn load_vcf_core(reader: &mut VcfReader) -> std::io::Result<RecordBatch> {
         } else {
             None
         };
+
+        if let Some(l) = &length {
+            if kind == "DEL" && start + l.abs() as usize != end {
+                let d = (start as i32) + l.abs() - (end as i32);
+                log::warn!("at {}:{}, end ({}) and length ({}) are inconsistent (off by {}).", chrom, start, end, l, d);
+                end = start + l.abs() as usize;
+            }
+        }
 
         let bnd = get_breakend(&rec)?;
 
@@ -124,7 +132,7 @@ pub fn load_vcf_core(reader: &mut VcfReader) -> std::io::Result<RecordBatch> {
         } else {
             None
         };
-        let end2: Option<u32> = if kind == "BND" {
+        let end2: Option<i32> = if kind == "BND" {
             if let Some(bnd) = &bnd {
                 let (chr2, pos2, _here, _there) = bnd;
                 if chr2 != chrom2.as_ref().unwrap() {
@@ -135,7 +143,7 @@ pub fn load_vcf_core(reader: &mut VcfReader) -> std::io::Result<RecordBatch> {
                         chr2.clone(),
                     ))
                 } else {
-                    Ok(Some(*pos2 as u32))
+                    Ok(Some(*pos2 as i32))
                 }
             } else {
                 Err(SveltError::MissingAlt(
@@ -182,8 +190,8 @@ pub fn load_vcf_core(reader: &mut VcfReader) -> std::io::Result<RecordBatch> {
         row_num_builder.append_value(rn as u32);
         chrom_id_builder.append_value(chrom_id as u16);
         chrom_builder.append_value(chrom);
-        start_builder.append_value(start as u32);
-        end_builder.append_value(end as u32);
+        start_builder.append_value(start as i32);
+        end_builder.append_value(end as i32);
         kind_builder.append_value(kind);
         length_builder.append_option(length);
         chrom2_id_builder.append_option(chrom2_id);
