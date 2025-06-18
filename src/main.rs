@@ -1,5 +1,9 @@
 use clap::{Parser, Subcommand};
-use svelt::{homology::index_features, merge::merge_vcfs, options::{CommonOptions, IndexingOptions, MergeOptions}};
+use svelt::{
+    homology::{find_similar, index_features},
+    merge::merge_vcfs,
+    options::{CommonOptions, IndexingOptions, MergeOptions},
+};
 
 /// Structuaral Variant (SV) VCF merging
 #[derive(Debug, Parser)]
@@ -39,7 +43,7 @@ enum Commands {
         options: MergeOptions,
 
         #[command(flatten)]
-        common: CommonOptions
+        common: CommonOptions,
     },
 
     /// Index a set of features for annotating homology
@@ -57,7 +61,26 @@ enum Commands {
         options: IndexingOptions,
 
         #[command(flatten)]
-        common: CommonOptions
+        common: CommonOptions,
+    },
+
+    /// Identify whether a given sequence is similar to a previously indexed one.
+    #[command(arg_required_else_help = true)]
+    FindSimilar {
+        /// Base name for previously sequenced features
+        #[arg(short, long)]
+        features: String,
+
+        /// The query sequence
+        #[arg(short, long)]
+        query: String,
+
+        /// k-mer length
+        #[arg(short, long, required = false, default_value = "11")]
+        k: usize,
+
+        #[command(flatten)]
+        common: CommonOptions,
     },
 }
 
@@ -75,7 +98,7 @@ async fn main() -> std::io::Result<()> {
             reference,
             write_merge_table,
             options,
-            common
+            common,
         } => {
             merge_vcfs(
                 &out,
@@ -84,13 +107,26 @@ async fn main() -> std::io::Result<()> {
                 &reference,
                 &write_merge_table,
                 &options,
-                &common
+                &common,
             )
             .await?;
         }
-        Commands::IndexFeatures { out, features, options, common } => {
+        Commands::IndexFeatures {
+            out,
+            features,
+            options,
+            common,
+        } => {
             index_features(&features, &out, &options, &common).await?;
-        },
+        }
+        Commands::FindSimilar {
+            features,
+            query,
+            k,
+            common,
+        } => {
+            find_similar(&features, &query, k, &common).await?;
+        }
     }
     Ok(())
 }

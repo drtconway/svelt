@@ -7,12 +7,14 @@ use std::{
 use autocompress::autodetect_open;
 use datafusion::{
     arrow::{
-        array::{PrimitiveBuilder, RecordBatch, StringDictionaryBuilder},
+        array::{Float64Array, PrimitiveBuilder, RecordBatch, StringDictionaryBuilder},
         datatypes::{DataType, Field, Schema, UInt32Type, UInt64Type},
     },
+    common::JoinType,
     config::{ParquetColumnOptions, TableParquetOptions},
     dataframe::DataFrameWriteOptions,
-    prelude::col,
+    functions_aggregate::sum::sum,
+    prelude::{coalesce, col, lit, sqrt, DataFrame, ParquetReadOptions, SessionContext},
 };
 use itertools::Itertools;
 use noodles::fasta;
@@ -41,7 +43,7 @@ pub async fn index_features(
 
     for rec in reader.records() {
         let rec = rec?;
-        let name = String::from_utf8(rec.name().to_vec()).unwrap();
+        let name = rec.definition().to_string().split_off(1);
 
         let n = names.len();
         names.push(name.clone());
@@ -63,7 +65,6 @@ pub async fn index_features(
     }
 
     let ctx = make_session_context(common);
-
 
     let rx = Regex::new(&options.pattern).map_err(|e| Error::new(ErrorKind::Other, e))?;
     let nm: Either<usize, String> = if let Ok(x) = options.name.parse() {
@@ -101,7 +102,6 @@ pub async fn index_features(
             name_builder.append_value(orig);
             class_builder.append_value(String::from("<unknown>"));
             nix_builder.append_value(nix as u32);
-
         }
     }
 
@@ -130,9 +130,8 @@ pub async fn index_features(
     let opts = DataFrameWriteOptions::default();
 
     df.sort_by(vec![col("class"), col("name")])?
-    .write_parquet(&format!("{}.nidx", out), opts, None)
-    .await?;
-
+        .write_parquet(&format!("{}-nidx.parquet", out), opts, None)
+        .await?;
 
     // Write out the kmer index
 
@@ -154,7 +153,7 @@ pub async fn index_features(
 
     let kmer_schema = Arc::new(Schema::new(vec![
         Field::new("kmer", DataType::UInt64, false),
-        Field::new("seq_num", DataType::UInt32, false),
+        Field::new("nix", DataType::UInt32, false),
         Field::new("count", DataType::UInt32, false),
     ]));
 
@@ -179,11 +178,189 @@ pub async fn index_features(
         .column_specific_options
         .insert(String::from("kmer"), kmer_opts);
 
-    df.sort_by(vec![col("kmer"), col("seq_num")])?
-        .write_parquet(&format!("{}.kidx", out), opts, Some(kidx_opts))
+    df.sort_by(vec![col("kmer"), col("nix")])?
+        .write_parquet(&format!("{}-kidx.parquet", out), opts, Some(kidx_opts))
         .await?;
 
     Ok(())
+}
+
+pub async fn find_similar(
+    features: &str,
+    query: &str,
+    k: usize,
+    common: &CommonOptions,
+) -> std::io::Result<()> {
+    let ctx = make_session_context(common);
+
+    let idx = FeatureIndex::new(features, &ctx).await?;
+
+    let mut fwd = Vec::new();
+    let mut rev = Vec::new();
+    Kmer::with_many_both(k, &query, |x, y| {
+        fwd.push(x.0);
+        rev.push(y.0);
+    });
+
+    fwd.sort();
+    let fwd: Vec<(u64, usize)> = fwd
+        .into_iter()
+        .chunk_by(|x| *x)
+        .into_iter()
+        .map(|(x, xs)| (x, xs.count()))
+        .collect();
+    let fwd = kmer_frequencies_to_table(&fwd, &ctx).await?;
+
+    idx.rank(fwd).await?;
+
+    rev.sort();
+    let rev: Vec<(u64, usize)> = rev
+        .into_iter()
+        .chunk_by(|x| *x)
+        .into_iter()
+        .map(|(x, xs)| (x, xs.count()))
+        .collect();
+    let rev = kmer_frequencies_to_table(&rev, &ctx).await?;
+
+    Ok(())
+}
+
+struct FeatureIndex {
+    kmers: DataFrame,
+    freqs: DataFrame,
+    names: DataFrame,
+}
+
+impl FeatureIndex {
+    pub async fn new(features: &str, ctx: &SessionContext) -> std::io::Result<FeatureIndex> {
+        log::info!("loading index '{}'", features);
+        let opts = ParquetReadOptions::default();
+        let kmers = ctx
+            .read_parquet(&format!("{}-kidx.parquet", features), opts.clone())
+            .await?;
+        let kmers = kmers
+            .with_column_renamed("kmer", "idx_kmer")?
+            .with_column_renamed("count", "idx_count")?;
+        let names = ctx
+            .read_parquet(&format!("{}-nidx.parquet", features), opts)
+            .await?;
+        let names = names.with_column_renamed("nix", "idx_nix")?;
+
+        let freqs = kmers
+            .clone()
+            .aggregate(
+                vec![col("nix")],
+                vec![sum(col("idx_count") * col("idx_count")).alias("idx_mag")],
+            )?
+            .with_column("idx_mag", sqrt(col("idx_mag")))?
+            .with_column_renamed("nix", "idx_nix")?;
+
+        log::info!("loading index done.");
+
+        Ok(FeatureIndex {
+            kmers,
+            freqs,
+            names,
+        })
+    }
+
+    pub async fn rank(&self, other: DataFrame) -> std::io::Result<()> {
+
+        let mag = other.clone().aggregate(
+            vec![],
+            vec![sum(col("count") * col("count")).alias("mag")],
+        )?
+        .with_column("mag", sqrt(col("mag")))?;
+        let mag = mag.collect().await?[0].column(0).as_any().downcast_ref::<Float64Array>().unwrap().value(0);
+
+        let tbl = self.kmers.clone().join(
+            other.clone(),
+            JoinType::Right,
+            &["idx_kmer"],
+            &["kmer"],
+            None,
+        )?;
+
+        if false {
+            tbl.clone().show().await?;
+        }
+
+        let tbl = tbl.aggregate(
+            vec![col("nix")],
+            vec![sum(col("idx_count") * col("count")).alias("raw_dot")],
+        )?;
+
+        if false {
+            tbl.clone()
+                .sort(vec![col("raw_dot").sort(false, false)])?
+                .show()
+                .await?;
+        }
+
+        let tbl = tbl
+            .join(
+                self.freqs.clone(),
+                JoinType::Left,
+                &["nix"],
+                &["idx_nix"],
+                None,
+            )?
+            .drop_columns(&["idx_nix"])?
+                .with_column("mag", lit(mag))?
+            .with_column(
+                "dot",
+                col("raw_dot") * lit(1.0) / (col("idx_mag") * col("mag")),
+            )?
+            .join(
+                self.names.clone(),
+                JoinType::Left,
+                &["nix"],
+                &["idx_nix"],
+                None,
+            )?
+            .drop_columns(&["idx_nix"])?
+            .filter(col("nix").is_not_null())?;
+
+        if true {
+            tbl.clone()
+                .sort(vec![col("dot").sort(false, false)])?
+                .show()
+                .await?;
+        }
+
+        Ok(())
+    }
+}
+
+async fn kmer_frequencies_to_table(
+    items: &Vec<(u64, usize)>,
+    ctx: &SessionContext,
+) -> std::io::Result<DataFrame> {
+    let mut kmer_builder = PrimitiveBuilder::<UInt64Type>::new();
+    let mut count_builder = PrimitiveBuilder::<UInt32Type>::new();
+
+    for (x, c) in items.iter() {
+        kmer_builder.append_value(*x);
+        count_builder.append_value(*c as u32);
+    }
+
+    let kmer_array = kmer_builder.finish();
+    let count_array = count_builder.finish();
+
+    let kmer_schema = Arc::new(Schema::new(vec![
+        Field::new("kmer", DataType::UInt64, false),
+        Field::new("count", DataType::UInt32, false),
+    ]));
+
+    let recs = RecordBatch::try_new(
+        kmer_schema,
+        vec![Arc::new(kmer_array), Arc::new(count_array)],
+    )
+    .map_err(|e| Error::new(ErrorKind::Other, e))?;
+
+    let df = ctx.read_batch(recs)?;
+
+    Ok(df)
 }
 
 fn _dot(lhs: &Vec<(u64, usize)>, rhs: &Vec<(u64, usize)>) -> f64 {
