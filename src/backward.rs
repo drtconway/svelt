@@ -47,32 +47,10 @@ pub async fn find_backwards_bnds(
             col("rhs_row_key").sort(true, false),
         ])?;
 
-    if false {
-        flip.clone()
-            .drop_columns(&[
-                "lhs_length",
-                "lhs_alt_seq",
-                "lhs_seq_hash",
-                "rhs_length",
-                "rhs_alt_seq",
-                "rhs_seq_hash",
-            ])?
-            .show()
-            .await?;
-    }
-
     let resolution = resolve_groups(flip).await?;
     let resolution = ctx
         .read_batch(resolution)
         .map_err(|e| Error::new(ErrorKind::Other, e))?;
-
-    if false {
-        resolution
-            .clone()
-            .sort_by(vec![col("new_row_key")])?
-            .show()
-            .await?;
-    }
 
     let tbl = update_tables(tbl, resolution.clone(), "flip-BND").await?;
 
@@ -121,19 +99,6 @@ pub async fn find_backwards_bnds(
             "flip_chrom2_id",
             "flip_end2",
         ])?;
-
-    if false {
-        tbl.clone()
-            .drop_columns(&["alt_seq"])?
-            .sort_by(vec![
-                col("chrom_id"),
-                col("start"),
-                col("end"),
-                col("row_id"),
-            ])?
-            .show()
-            .await?;
-    }
 
     Ok(tbl)
 }
