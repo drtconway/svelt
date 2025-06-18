@@ -2,7 +2,6 @@ use std::io::{Error, ErrorKind};
 
 use datafusion::{
     common::JoinType,
-    functions_aggregate::count::count,
     prelude::{DataFrame, SessionContext, col, lit},
 };
 
@@ -33,20 +32,6 @@ pub async fn find_exact_non_bnd(
     let candidates = tbl.clone().filter(col("vix_count").lt(lit(n)))?;
     let lhs = prefix_cols(candidates.clone(), "lhs")?;
     let rhs = prefix_cols(candidates.clone(), "rhs")?;
-
-    if false {
-        lhs.clone()
-            .drop_columns(&[
-                "lhs_chrom",
-                "lhs_chrom2_id",
-                "lhs_chrom2",
-                "lhs_end2",
-                "lhs_alt_seq",
-            ])?
-            .sort_by(vec![col("lhs_chrom_id"), col("lhs_start"), col("lhs_end")])?
-            .show()
-            .await?;
-    }
 
     let exact = lhs
         .join(
@@ -79,45 +64,10 @@ pub async fn find_exact_non_bnd(
             col("rhs_row_key").sort(true, false),
         ])?;
 
-    if false {
-        exact
-            .clone()
-            .drop_columns(&[
-                "lhs_chrom",
-                "lhs_chrom2_id",
-                "lhs_chrom2",
-                "lhs_end2",
-                "lhs_alt_seq",
-                "rhs_chrom",
-                "rhs_chrom2_id",
-                "rhs_chrom2",
-                "rhs_end2",
-                "rhs_alt_seq",
-            ])?
-            .show()
-            .await?;
-    }
-
     let resolution = resolve_groups(exact).await?;
     let resolution = ctx
         .read_batch(resolution)
         .map_err(|e| Error::new(ErrorKind::Other, e))?;
-
-    if false {
-        resolution.clone().show().await?;
-    }
-
-    if false {
-        tbl.clone()
-            .aggregate(
-                vec![col("row_id")],
-                vec![count(col("row_key")).alias("count")],
-            )?
-            .filter(col("count").gt(lit(1)))?
-            .sort_by(vec![col("row_id")])?
-            .show()
-            .await?;
-    }
 
     let tbl = update_tables(tbl, resolution, "exact").await?;
 
@@ -169,30 +119,10 @@ pub async fn find_exact_bnd(
             col("rhs_row_key").sort(true, false),
         ])?;
 
-    if false {
-        exact.clone().show().await?;
-    }
-
     let resolution = resolve_groups(exact).await?;
     let resolution = ctx
         .read_batch(resolution)
         .map_err(|e| Error::new(ErrorKind::Other, e))?;
-
-    if false {
-        resolution.clone().show().await?;
-    }
-
-    if false {
-        tbl.clone()
-            .aggregate(
-                vec![col("row_id")],
-                vec![count(col("row_key")).alias("count")],
-            )?
-            .filter(col("count").gt(lit(1)))?
-            .sort_by(vec![col("row_id")])?
-            .show()
-            .await?;
-    }
 
     let tbl = update_tables(tbl, resolution, "exact-BND").await?;
 

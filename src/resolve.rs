@@ -169,17 +169,5 @@ pub async fn update_tables(
         )?
         .drop_columns(&["orig_row_id", "new_row_key", "new_vix_count", "new_vix_set", "new_criterion"])?;
 
-    if false {
-        tbl.clone()
-            .sort_by(vec![
-                col("chrom_id"),
-                col("start"),
-                col("end"),
-                col("row_id"),
-            ])?
-            .show()
-            .await?;
-    }
-
     Ok(tbl)
 }
