@@ -53,6 +53,19 @@ pub struct IndexingOptions {
     pub class: String,
 }
 
+/// Options for different kinds of query
+#[derive(Debug, Args)]
+#[group(required = true, multiple = false)]
+pub struct QueryOptions {
+    /// A literal query sequence given on the command line
+    #[arg(short, long)]
+    pub query: Option<String>,
+
+    /// Read query sequences from a FASTA file
+    #[arg(short, long)]
+    pub query_file: Option<String>
+}
+
 /// Options common to all commands
 #[derive(Debug, Args)]
 pub struct CommonOptions {

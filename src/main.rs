@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 use svelt::{
     homology::{find_similar, index_features},
     merge::merge_vcfs,
-    options::{CommonOptions, IndexingOptions, MergeOptions},
+    options::{CommonOptions, IndexingOptions, MergeOptions, QueryOptions},
 };
 
 /// Structuaral Variant (SV) VCF merging
@@ -71,13 +71,12 @@ enum Commands {
         #[arg(short, long)]
         features: String,
 
-        /// The query sequence
-        #[arg(short, long)]
-        query: String,
-
         /// k-mer length
         #[arg(short, long, required = false, default_value = "11")]
         k: usize,
+
+        #[command(flatten)]
+        query: QueryOptions,
 
         #[command(flatten)]
         common: CommonOptions,

@@ -23,7 +23,7 @@ use regex::Regex;
 use crate::{
     either::Either::{self, Left, Right},
     kmers::Kmer,
-    options::{CommonOptions, IndexingOptions, make_session_context},
+    options::{CommonOptions, IndexingOptions, QueryOptions, make_session_context},
 };
 
 pub async fn index_features(
@@ -187,6 +187,96 @@ pub async fn index_features(
 
 pub async fn find_similar(
     features: &str,
+    query: &QueryOptions,
+    k: usize,
+    common: &CommonOptions,
+) -> std::io::Result<()> {
+    let ctx = make_session_context(common);
+
+    let idx = FeatureIndex::new(features, &ctx).await?;
+
+    if let Some(query) = &query.query {
+        return find_similar_single(features, query, k, common).await;
+    }
+
+    let query_file = query.query_file.as_ref().unwrap();
+
+    let reader = autodetect_open(query_file)?;
+    let reader = BufReader::new(reader);
+    let mut reader = fasta::io::reader::Builder::default().build_from_reader(reader)?;
+
+    let mut curr: Option<DataFrame> = None;
+    let mut curr_count: usize = 0;
+    for rec in reader.records() {
+        let rec = rec?;
+
+        let name = String::from_utf8(rec.name().to_vec()).unwrap();
+        log::info!("scanning {}", name);
+
+        let seq = rec.sequence();
+        if seq.len() > 10000 {
+            log::info!("skipping long sequence {} ({} bp)", name, seq.len());
+            continue;
+        }
+        let mut fwd = Vec::new();
+        let mut rev = Vec::new();
+        Kmer::with_many_both(k, seq, |x, y| {
+            fwd.push(x.0);
+            rev.push(y.0);
+        });
+
+        fwd.sort();
+        let fwd: Vec<(u64, usize)> = fwd
+            .into_iter()
+            .chunk_by(|x| *x)
+            .into_iter()
+            .map(|(x, xs)| (x, xs.count()))
+            .collect();
+        curr_count += fwd.len();
+        let fwd = kmer_frequencies_to_table(&fwd, &ctx)
+            .await?
+            .with_column("strand", lit("+"))?;
+
+        rev.sort();
+        let rev: Vec<(u64, usize)> = rev
+            .into_iter()
+            .chunk_by(|x| *x)
+            .into_iter()
+            .map(|(x, xs)| (x, xs.count()))
+            .collect();
+        curr_count += rev.len();
+        let rev = kmer_frequencies_to_table(&rev, &ctx)
+            .await?
+            .with_column("strand", lit("-"))?;
+
+        let block = fwd.union(rev)?.with_column("name", lit(name))?;
+        curr = if let Some(block0) = curr {
+            Some(block0.union(block)?)
+        } else {
+            Some(block)
+        };
+
+        if curr_count > 10000 {
+            log::info!("ranking over {} k-mers.", curr_count);
+            let tbl = curr.take().unwrap();
+            idx.rank_many(tbl).await?;
+            curr_count = 0;
+        }
+    }
+
+    if curr.is_none() {
+        return Ok(());
+    }
+
+    log::info!("ranking over {} k-mers.", curr_count);
+    let all = curr.unwrap();
+    idx.rank_many(all).await?;
+
+    Ok(())
+}
+
+async fn find_similar_single(
+    features: &str,
     query: &str,
     k: usize,
     common: &CommonOptions,
@@ -222,8 +312,7 @@ pub async fn find_similar(
     let rev = kmer_frequencies_to_table(&rev, &ctx).await?;
     let rev = idx.rank(rev).await?.with_column("strand", lit("-"))?;
 
-    fwd
-        .union(rev)?
+    fwd.union(rev)?
         .sort(vec![col("dot").sort(false, false)])?
         .show()
         .await?;
@@ -250,7 +339,9 @@ impl FeatureIndex {
         let names = ctx
             .read_parquet(&format!("{}-nidx.parquet", features), opts)
             .await?;
-        let names = names.with_column_renamed("nix", "idx_nix")?;
+        let names = names
+            .with_column_renamed("name", "idx_name")?
+            .with_column_renamed("nix", "idx_nix")?;
 
         let freqs = kmers
             .clone()
@@ -328,7 +419,82 @@ impl FeatureIndex {
                 None,
             )?
             .drop_columns(&["idx_nix"])?
-            .filter(col("nix").is_not_null())?;
+            .filter(col("nix").is_not_null())?
+            .with_column_renamed("idx_name", "name")?;
+
+        if false {
+            tbl.clone()
+                .sort(vec![col("dot").sort(false, false)])?
+                .show()
+                .await?;
+        }
+
+        Ok(tbl)
+    }
+
+    pub async fn rank_many(&self, queries: DataFrame) -> std::io::Result<DataFrame> {
+        if false {
+            queries.clone().show().await?;
+        }
+
+        let mag = queries
+            .clone()
+            .aggregate(
+                vec![col("name")],
+                vec![sum(col("count") * col("count")).alias("mag")],
+            )?
+            .with_column("mag", sqrt(col("mag")))?
+            .with_column_renamed("name", "mag_name")?;
+
+        let tbl = self.kmers.clone().join(
+            queries.clone(),
+            JoinType::Right,
+            &["idx_kmer"],
+            &["kmer"],
+            None,
+        )?;
+
+        if false {
+            tbl.clone().show().await?;
+        }
+
+        let tbl = tbl.aggregate(
+            vec![col("name"), col("nix"), col("strand")],
+            vec![sum(col("idx_count") * col("count")).alias("raw_dot")],
+        )?;
+
+        if false {
+            tbl.clone()
+                .sort(vec![col("raw_dot").sort(false, false)])?
+                .show()
+                .await?;
+        }
+
+        let tbl = tbl
+            .join(
+                self.freqs.clone(),
+                JoinType::Left,
+                &["nix"],
+                &["idx_nix"],
+                None,
+            )?
+            .drop_columns(&["idx_nix"])?
+            .join(mag, JoinType::Left, &["name"], &["mag_name"], None)?
+            .drop_columns(&["mag_name"])?
+            .with_column(
+                "dot",
+                col("raw_dot") * lit(1.0) / (col("idx_mag") * col("mag")),
+            )?
+            .join(
+                self.names.clone(),
+                JoinType::Left,
+                &["nix"],
+                &["idx_nix"],
+                None,
+            )?
+            .drop_columns(&["idx_nix"])?
+            .filter(col("nix").is_not_null())?
+            .filter(col("dot").gt_eq(lit(0.25)))?;
 
         if true {
             tbl.clone()
