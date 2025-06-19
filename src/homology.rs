@@ -1,27 +1,38 @@
 use std::{
     collections::HashMap,
-    io::{BufReader, Error, ErrorKind},
+    io::{BufReader, BufWriter, Error, ErrorKind},
     sync::Arc,
 };
 
-use autocompress::autodetect_open;
+use autocompress::{CompressionLevel, autodetect_create, autodetect_open};
 use datafusion::{
     arrow::{
-        array::{Float64Array, PrimitiveBuilder, RecordBatch, StringDictionaryBuilder},
-        datatypes::{DataType, Field, Schema, UInt32Type, UInt64Type},
+        array::{
+            Array, Float64Array, GenericStringArray, PrimitiveArray, PrimitiveBuilder, RecordBatch,
+            StringDictionaryBuilder,
+        },
+        datatypes::{DataType, Field, Float64Type, Int32Type, Schema, UInt32Type, UInt64Type},
     },
     common::JoinType,
     config::{ParquetColumnOptions, TableParquetOptions},
     dataframe::DataFrameWriteOptions,
-    functions_aggregate::sum::sum,
-    prelude::{DataFrame, ParquetReadOptions, SessionContext, col, lit, sqrt},
+    functions_aggregate::{count::count, sum::sum},
+    prelude::{
+        DataFrame, ParquetReadOptions, SessionContext, cast, col, greatest, least, lit, sqrt,
+    },
+    scalar::ScalarValue,
 };
 use itertools::Itertools;
-use noodles::fasta;
+use noodles::fasta::{
+    self,
+    record::{Definition, Sequence},
+};
 use regex::Regex;
 
 use crate::{
+    disjoint_set::DisjointSet,
     either::Either::{self, Left, Right},
+    expressions::prefix_cols,
     kmers::Kmer,
     options::{CommonOptions, IndexingOptions, QueryOptions, make_session_context},
 };
@@ -256,7 +267,7 @@ pub async fn find_similar(
             Some(block)
         };
 
-        if curr_count > 10000 {
+        if curr_count > 1000000 {
             log::info!("ranking over {} k-mers.", curr_count);
             let tbl = curr.take().unwrap();
             idx.rank_many(tbl).await?;
@@ -316,6 +327,289 @@ async fn find_similar_single(
         .sort(vec![col("dot").sort(false, false)])?
         .show()
         .await?;
+
+    Ok(())
+}
+
+pub async fn cluster_sequences(
+    sequences: &str,
+    out: &str,
+    k: usize,
+    cutoff: f64,
+    common: &CommonOptions,
+) -> std::io::Result<()> {
+    let ctx = make_session_context(common);
+
+    let chi_squared_cdf = datafusion_statrs::distribution::chi_squared::cdf();
+
+    let reader = autodetect_open(sequences)?;
+    let reader = BufReader::new(reader);
+    let mut reader = fasta::io::reader::Builder::default().build_from_reader(reader)?;
+
+    let mut sequence_index = HashMap::new();
+    let mut curr: Option<DataFrame> = None;
+    let mut curr_count: usize = 0;
+    for rec in reader.records() {
+        let rec = rec?;
+
+        let name = String::from_utf8(rec.name().to_vec()).unwrap();
+        log::info!("scanning {}", name);
+
+        let seq = rec.sequence();
+
+        sequence_index.insert(
+            name.clone(),
+            String::from_utf8(seq.as_ref().to_vec()).unwrap(),
+        );
+
+        let mut fwd = Vec::new();
+        Kmer::with_many_both(k, seq, |x, _y| {
+            fwd.push(x.0);
+        });
+
+        fwd.sort();
+        let fwd: Vec<(u64, usize)> = fwd
+            .into_iter()
+            .chunk_by(|x| *x)
+            .into_iter()
+            .map(|(x, xs)| (x, xs.count()))
+            .collect();
+        curr_count += fwd.len();
+        let fwd = kmer_frequencies_to_table(&fwd, &ctx).await?;
+
+        let block = fwd.with_column("name", lit(name))?;
+        curr = if let Some(block0) = curr {
+            Some(block0.union(block)?)
+        } else {
+            Some(block)
+        };
+    }
+
+    if curr.is_none() {
+        log::warn!("no sequences to cluster!");
+        return Ok(());
+    }
+
+    log::info!("ranking over {} k-mers.", curr_count);
+    let all = curr.unwrap();
+
+    let mag = all
+        .clone()
+        .clone()
+        .aggregate(
+            vec![col("name")],
+            vec![
+                sum(col("count") * col("count")).alias("mag"),
+                sum(col("count")).alias("mag_count"),
+            ],
+        )?
+        .with_column("mag", sqrt(col("mag")))?
+        .with_column_renamed("name", "mag_name")?;
+
+    let lhs = prefix_cols(all.clone(), "lhs")?;
+    let rhs = prefix_cols(all.clone(), "rhs")?;
+
+    let tbl = lhs.join(
+        rhs,
+        JoinType::Inner,
+        &["lhs_kmer"],
+        &["rhs_kmer"],
+        Some(lit(true).and(col("lhs_name").lt(col("rhs_name")))),
+    )?;
+
+    let lhs_missing = all
+        .clone()
+        .join(
+            tbl.clone(),
+            JoinType::LeftAnti,
+            &["name", "kmer"],
+            &["lhs_name", "lhs_kmer"],
+            None,
+        )?
+        .aggregate(
+            vec![col("name")],
+            vec![sum(col("count")).alias("lhs_missing")],
+        )?;
+
+    let rhs_missing = all
+        .clone()
+        .join(
+            tbl.clone(),
+            JoinType::LeftAnti,
+            &["name", "kmer"],
+            &["rhs_name", "rhs_kmer"],
+            None,
+        )?
+        .aggregate(
+            vec![col("name")],
+            vec![sum(col("count")).alias("rhs_missing")],
+        )?;
+
+    let tbl = tbl
+        .with_column("count_difference", col("lhs_count") - col("rhs_count"))?
+        .with_column("count_sum", col("lhs_count") + col("rhs_count"))?;
+
+    if false {
+        tbl.clone().show().await?;
+    }
+
+    let tbl = tbl
+        .aggregate(
+            vec![col("lhs_name"), col("rhs_name")],
+            vec![
+            sum(col("lhs_count") * col("rhs_count")).alias("raw_dot"),
+            sum(lit(1.0) * col("count_difference") * col("count_difference") / col("count_sum"))
+                .alias("chi_sq"),
+            count(col("count_sum")).alias("df")
+        ],
+        )?
+        .join(lhs_missing, JoinType::Left, &["lhs_name"], &["name"], None)?
+        .drop_columns(&["name"])?
+        .join(rhs_missing, JoinType::Left, &["rhs_name"], &["name"], None)?
+        .drop_columns(&["name"])?
+        .fill_null(
+            ScalarValue::from(0i32),
+            vec![String::from("lhs_missing"), String::from("rhs_missing")],
+        )?
+        .with_column(
+            "chi_sq",
+            lit(0.5) * (col("chi_sq") + col("lhs_missing") + col("rhs_missing")),
+        )?
+        .drop_columns(&["lhs_missing", "rhs_missing"])?
+        .with_column(
+            "score",
+            chi_squared_cdf.call(vec![col("chi_sq"), cast(col("df"), DataType::Float64)]),
+        )?;
+
+    let tbl = tbl.clone().sort(vec![col("score").sort(true, false)])?;
+
+    if true {
+        tbl.clone().show().await?;
+    }
+
+    /*
+        if use_cosine {
+            let tbl = tbl
+                .join(
+                    mag.clone(),
+                    JoinType::Left,
+                    &["lhs_name"],
+                    &["mag_name"],
+                    None,
+                )?
+                .with_column_renamed("mag", "lhs_mag")?
+                .with_column_renamed("mag_count", "lhs_count")?
+                .drop_columns(&["mag_name"])?
+                .join(
+                    mag.clone(),
+                    JoinType::Left,
+                    &["rhs_name"],
+                    &["mag_name"],
+                    None,
+                )?
+                .with_column_renamed("mag", "rhs_mag")?
+                .with_column_renamed("mag_count", "rhs_count")?
+                .drop_columns(&["mag_name"])?
+                .with_column(
+                    "dot",
+                    col("raw_dot") * lit(1.0) / (col("lhs_mag") * col("rhs_mag")),
+                )?
+                .with_column(
+                    "ratio",
+                    lit(1.0) * least(vec![col("lhs_count"), col("rhs_count")])
+                        / greatest(vec![col("lhs_count"), col("rhs_count")]),
+                )?
+                .with_column("score", col("dot") * col("ratio"))?;
+
+            let tbl = tbl.clone().sort(vec![
+                col("score").sort(false, false),
+                col("dot").sort(false, false),
+                col("ratio").sort(false, false),
+            ])?;
+
+            if true {
+                tbl.clone()
+                    .sort(vec![
+                        col("score").sort(false, false),
+                        col("lhs_name").sort(true, false),
+                        col("rhs_name").sort(true, false),
+                    ])?
+                    .show()
+                    .await?;
+            }
+        }
+    */
+
+    let batch = tbl.clone().collect().await?;
+    let itr = batch.iter().flat_map(|recs| MergeIterator::new(recs));
+
+    let mut uf: DisjointSet<usize> = DisjointSet::new();
+    let mut names = Vec::new();
+    let mut name_index: HashMap<String, usize> = HashMap::new();
+    let mut edge_count: HashMap<usize, usize> = HashMap::new();
+    for item in itr {
+        if !name_index.contains_key(item.0) {
+            let n = name_index.len();
+            names.push(String::from(item.0));
+            name_index.insert(String::from(item.0), n);
+        }
+        if !name_index.contains_key(item.1) {
+            let n = name_index.len();
+            names.push(String::from(item.1));
+            name_index.insert(String::from(item.1), n);
+        }
+
+        let d = item.2;
+        if d < cutoff {
+            let l = *name_index.get(item.0).unwrap();
+            let r = *name_index.get(item.1).unwrap();
+
+            *edge_count.entry(l).or_default() += 1;
+            *edge_count.entry(r).or_default() += 1;
+
+            let a = uf.find(l);
+            let b = uf.find(r);
+            if a != b {
+                uf.union(a, b);
+            }
+        }
+    }
+
+    let mut groups: HashMap<usize, Vec<usize>> = HashMap::new();
+    let mut group_index: Vec<usize> = (0..name_index.len()).map(|_| 0).collect();
+    for i in 0..name_index.len() {
+        let j = uf.find(i);
+        group_index[i] = j;
+        groups.entry(j).or_default().push(i);
+    }
+
+    log::info!("at cutoff {} there were {} groups", cutoff, groups.len());
+
+    let out = autodetect_create(out, CompressionLevel::default())?;
+    let out = BufWriter::new(out);
+    let mut out = fasta::io::Writer::new(out);
+
+    for group_item in groups.iter() {
+        let mut max_member = *group_item.0;
+        let mut max_link = 0;
+        for j in group_item.1.iter() {
+            let c = if let Some(c) = edge_count.get(j) {
+                *c
+            } else {
+                0
+            };
+            if c > max_link {
+                max_member = *j;
+                max_link = c;
+            }
+        }
+        let name = &names[max_member];
+        let seq = sequence_index.get(name).unwrap();
+        let seq = Sequence::from(seq.as_bytes().to_vec());
+
+        let rec = fasta::Record::new(Definition::new(name as &str, None), seq);
+        out.write_record(&rec)?;
+    }
 
     Ok(())
 }
@@ -440,11 +734,12 @@ impl FeatureIndex {
         let mag = queries
             .clone()
             .aggregate(
-                vec![col("name")],
+                vec![col("name"), col("strand")],
                 vec![sum(col("count") * col("count")).alias("mag")],
             )?
             .with_column("mag", sqrt(col("mag")))?
-            .with_column_renamed("name", "mag_name")?;
+            .with_column_renamed("name", "mag_name")?
+            .with_column_renamed("strand", "mag_strand")?;
 
         let tbl = self.kmers.clone().join(
             queries.clone(),
@@ -512,11 +807,11 @@ async fn kmer_frequencies_to_table(
     ctx: &SessionContext,
 ) -> std::io::Result<DataFrame> {
     let mut kmer_builder = PrimitiveBuilder::<UInt64Type>::new();
-    let mut count_builder = PrimitiveBuilder::<UInt32Type>::new();
+    let mut count_builder = PrimitiveBuilder::<Int32Type>::new();
 
     for (x, c) in items.iter() {
         kmer_builder.append_value(*x);
-        count_builder.append_value(*c as u32);
+        count_builder.append_value(*c as i32);
     }
 
     let kmer_array = kmer_builder.finish();
@@ -524,7 +819,7 @@ async fn kmer_frequencies_to_table(
 
     let kmer_schema = Arc::new(Schema::new(vec![
         Field::new("kmer", DataType::UInt64, false),
-        Field::new("count", DataType::UInt32, false),
+        Field::new("count", DataType::Int32, false),
     ]));
 
     let recs = RecordBatch::try_new(
@@ -538,28 +833,49 @@ async fn kmer_frequencies_to_table(
     Ok(df)
 }
 
-fn _dot(lhs: &Vec<(u64, usize)>, rhs: &Vec<(u64, usize)>) -> f64 {
-    let mut i = 0;
-    let mut j = 0;
-    let mut d = 0.0;
-    let mut lmag = 0.0;
-    let mut rmag = 0.0;
-    while i < lhs.len() && j < rhs.len() {
-        if lhs[i].0 < rhs[j].0 {
-            lmag += (lhs[i].1 * lhs[i].1) as f64;
-            i += 1;
-            continue;
+struct MergeIterator<'a> {
+    lhs_name: &'a GenericStringArray<i32>,
+    rhs_name: &'a GenericStringArray<i32>,
+    score: &'a PrimitiveArray<Float64Type>,
+    i: usize,
+}
+
+impl<'a> MergeIterator<'a> {
+    pub fn new(recs: &'a RecordBatch) -> MergeIterator<'a> {
+        let lhs_name = Self::get_array::<GenericStringArray<i32>>(recs, "lhs_name");
+        let rhs_name = Self::get_array::<GenericStringArray<i32>>(recs, "rhs_name");
+        let score = Self::get_array::<Float64Array>(recs, "score");
+        MergeIterator {
+            lhs_name,
+            rhs_name,
+            score,
+            i: 0,
         }
-        if lhs[i].0 > rhs[j].0 {
-            rmag += (rhs[j].1 * rhs[j].1) as f64;
-            j += 1;
-            continue;
-        }
-        d += (lhs[i].1 * rhs[j].1) as f64;
-        lmag += (lhs[i].1 * lhs[i].1) as f64;
-        rmag += (rhs[j].1 * rhs[j].1) as f64;
-        i += 1;
-        j += 1;
     }
-    d / (lmag.sqrt() * rmag.sqrt())
+
+    fn get_array<Type: 'static>(recs: &'a RecordBatch, name: &str) -> &'a Type {
+        recs.column_by_name(name)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Type>()
+            .unwrap()
+    }
+}
+
+impl<'a> Iterator for MergeIterator<'a> {
+    type Item = (&'a str, &'a str, f64);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.i < self.lhs_name.len() {
+            let i = self.i;
+            self.i += 1;
+
+            let lhs_name = self.lhs_name.value(i);
+            let rhs_name = self.rhs_name.value(i);
+            let dot = self.score.value(i);
+            Some((lhs_name, rhs_name, dot))
+        } else {
+            None
+        }
+    }
 }

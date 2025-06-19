@@ -176,7 +176,7 @@ pub fn construct_record(
 
     let mut info: Vec<(String, Option<InfoValue>)> = Vec::new();
     for item in the_record.info().iter(&the_header) {
-        let (name, value) = item?;
+        let (name, value) = item.unwrap();
         let name = String::from(name);
         let value = value.map(make_info_value);
         info.push((name, value));

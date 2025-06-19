@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use svelt::{
-    homology::{find_similar, index_features},
+    homology::{cluster_sequences, find_similar, index_features},
     merge::merge_vcfs,
     options::{CommonOptions, IndexingOptions, MergeOptions, QueryOptions},
 };
@@ -81,11 +81,34 @@ enum Commands {
         #[command(flatten)]
         common: CommonOptions,
     },
+
+    /// Identify whether a given sequence is similar to a previously indexed one.
+    #[command(arg_required_else_help = true)]
+    ClusterSequences {
+        /// Name of FASTA file with sequences to cluster
+        #[arg(short, long)]
+        sequences: String,
+
+        /// Name of FASTA file to write the output to
+        #[arg(short, long)]
+        out: String,
+
+        /// k-mer length
+        #[arg(short, long, required = false, default_value = "11")]
+        k: usize,
+
+        /// dot-product cutoff for clustering
+        #[arg(short, long, required = false, default_value = "0.01")]
+        cutoff: f64,
+
+        #[command(flatten)]
+        common: CommonOptions,
+    },
 }
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    env_logger::init();
+    env_logger::builder().filter_level(log::LevelFilter::Info).init();
 
     let cli = Cli::parse();
 
@@ -126,6 +149,15 @@ async fn main() -> std::io::Result<()> {
         } => {
             find_similar(&features, &query, k, &common).await?;
         }
+        Commands::ClusterSequences {
+            sequences,
+            out,
+            k,
+            cutoff,
+            common,
+        } => {
+            cluster_sequences(&sequences, &out, k, cutoff, &common).await?;
+        },
     }
     Ok(())
 }
