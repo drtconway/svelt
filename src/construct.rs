@@ -1,12 +1,15 @@
 use std::collections::HashSet;
-use std::io::{Error, ErrorKind};
+use std::io::{BufWriter, Error, ErrorKind};
 use std::rc::Rc;
 
+use autocompress::io::ProcessorWriter;
+use autocompress::{CompressionLevel, Processor, autodetect_create};
 use noodles::core::Position;
 use noodles::fasta::Repository;
 use noodles::vcf;
 use noodles::vcf::header::record::value::map::Builder;
 use noodles::vcf::header::record::value::map::info::{Number, Type};
+use noodles::vcf::variant::io::Write;
 use noodles::vcf::variant::record::{
     AlternateBases as AlternateBases_, Filters as Filters_, Ids as Ids_,
 };
@@ -20,7 +23,67 @@ use noodles::vcf::{Header, Record, variant::RecordBuf};
 use vcf::variant::record_buf::info::field::value::Array as InfoArray;
 
 use crate::breakends::BreakEnd;
+use crate::options::MergeOptions;
 use crate::tables::is_seq;
+
+pub type InnerWriter =
+    BufWriter<ProcessorWriter<Box<dyn Processor + Send + Unpin + 'static>, std::fs::File>>;
+pub struct MergeBuilder {
+    writer: vcf::io::Writer<InnerWriter>,
+    options: Rc<MergeOptions>,
+    header: Header,
+    reference: Option<Rc<Repository>>,
+    current_chrom: String
+}
+
+impl MergeBuilder {
+    pub fn new(
+        out: &str,
+        options: Rc<MergeOptions>,
+        header: Header,
+        reference: Option<Rc<Repository>>,
+    ) -> std::io::Result<MergeBuilder> {
+        let writer = autodetect_create(out, CompressionLevel::Default)?;
+        let writer = BufWriter::new(writer);
+        let mut writer = vcf::io::Writer::new(writer);
+        writer.write_header(&header)?;
+
+        Ok(MergeBuilder {
+            writer,
+            options,
+            header,
+            reference,
+            current_chrom: String::new()
+        })
+    }
+
+    pub fn construct(
+        &mut self,
+        recs: Vec<Option<(Rc<Header>, Record)>>,
+        vix_samples: &Vec<usize>,
+        alts: &Vec<Option<String>>,
+        flip: bool,
+        criteria: &str,
+    ) -> std::io::Result<()> {
+        let rec = construct_record(
+            &self.header,
+            recs,
+            &vix_samples,
+            self.options.force_alt_tags,
+            &self.options.unwanted_info,
+            &alts,
+            flip,
+            &criteria,
+            &self.reference,
+        )?;
+        self.writer.write_variant_record(&self.header, &rec)?;
+        if rec.reference_sequence_name() != &self.current_chrom {
+            self.current_chrom = String::from(rec.reference_sequence_name());
+            log::info!("writing variants for {}", self.current_chrom);
+        }
+        Ok(())
+    }
+}
 
 pub fn add_svelt_header_fields(
     header: &mut Header,
@@ -89,7 +152,7 @@ pub fn construct_record(
     alts: &Vec<Option<String>>,
     flip: bool,
     criteria: &str,
-    repo: &Option<Repository>,
+    repo: &Option<Rc<Repository>>,
 ) -> std::io::Result<RecordBuf> {
     let _ = header;
     let mut the_record = None;
@@ -125,7 +188,7 @@ pub fn construct_record(
             .map_err(|e| Error::new(ErrorKind::Other, e))?;
         log::info!("unflipped: {:?}", orig);
         let flipped = orig.flip();
-        let flipped_fmt = flipped.format(repo.clone().unwrap())?;
+        let flipped_fmt = flipped.format(repo.clone().unwrap().as_ref())?;
         log::info!("flipped: {:?}", flipped_fmt);
         chrom = flipped_fmt.0;
         variant_start = flipped_fmt.1;
@@ -145,7 +208,6 @@ pub fn construct_record(
         chrom2 = Some(bnd.chrom2.clone());
         end2 = Some(bnd.end2);
     }
-
 
     let alternate_bases = AlternateBases::from(alternate_bases);
 
@@ -190,10 +252,7 @@ pub fn construct_record(
             String::from("CHR2"),
             Some(InfoValue::String(chrom2.clone())),
         ));
-        info.push((
-            String::from("END2"),
-            Some(InfoValue::Integer(*end2 as i32)),
-        ));
+        info.push((String::from("END2"), Some(InfoValue::Integer(*end2 as i32))));
     }
     if criteria.len() > 0 {
         let criteria: Vec<Option<String>> =

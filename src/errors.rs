@@ -17,6 +17,7 @@ pub enum SveltError {
     MissingInfo(String, usize, String),
     MissingType(String, usize),
     NeardexDuplicate(u32),
+    OptionReferenceRequired(String),
 }
 
 impl Display for SveltError {
@@ -75,6 +76,9 @@ impl Display for SveltError {
             }
             SveltError::NeardexDuplicate(key) => {
                 write!(f, "Cannot construct Neardex with duplicate key {}", key)
+            }
+            SveltError::OptionReferenceRequired(opt) => {
+                write!(f, "Option '{}' requires a reference sequence to be given", opt)
             }
         }
     }

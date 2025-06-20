@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use clap::{Parser, Subcommand};
 use svelt::{
     homology::{cluster_sequences, find_similar, index_features},
@@ -19,18 +21,6 @@ enum Commands {
     /// Apply annotations from one VCF to another
     #[command(arg_required_else_help = true)]
     Merge {
-        /// Write out the final merge table
-        #[arg(long)]
-        write_merge_table: Option<String>,
-
-        /// INFO fields to drop (if they exist)
-        #[arg(short, long, value_delimiter = ',')]
-        unwanted_info: Vec<String>,
-
-        /// Reference sequence. Required for some extended type of merging.
-        #[arg(short, long)]
-        reference: Option<String>,
-
         /// The output filename
         #[arg(short, long)]
         out: String,
@@ -82,7 +72,7 @@ enum Commands {
         common: CommonOptions,
     },
 
-    /// Identify whether a given sequence is similar to a previously indexed one.
+    /// Group similar sequences, and select a representative from each group
     #[command(arg_required_else_help = true)]
     ClusterSequences {
         /// Name of FASTA file with sequences to cluster
@@ -116,19 +106,14 @@ async fn main() -> std::io::Result<()> {
         Commands::Merge {
             out,
             vcf,
-            unwanted_info,
-            reference,
-            write_merge_table,
             options,
             common,
         } => {
+            let options = Rc::new(options);
             merge_vcfs(
                 &out,
                 &vcf,
-                &unwanted_info,
-                &reference,
-                &write_merge_table,
-                &options,
+                options,
                 &common,
             )
             .await?;

@@ -1,12 +1,11 @@
 use std::{
-    io::{BufRead, BufWriter, Error, ErrorKind},
+    io::{BufRead, Error, ErrorKind},
     rc::Rc,
 };
 
-use autocompress::autodetect_create;
 use datafusion::{
     arrow::{
-        array::{BooleanArray, GenericStringArray, Int64Array},
+        array::{BooleanArray, GenericStringArray, Int64Array, RecordBatch},
         datatypes::DataType,
     },
     config::CsvOptions,
@@ -15,16 +14,17 @@ use datafusion::{
 };
 use noodles::{
     fasta::{self, repository::adapters::IndexedReader},
-    vcf::{self, Header, Record, header::SampleNames, variant::io::Write as _},
+    vcf::{self, Header, Record, header::SampleNames},
 };
 
 use crate::{
     almost::find_almost_exact,
     backward::find_backwards_bnds,
     chroms::ChromSet,
-    construct::{add_svelt_header_fields, construct_record},
+    construct::{MergeBuilder, add_svelt_header_fields},
+    errors::as_io_error,
     exact::find_exact,
-    options::{make_session_context, CommonOptions, MergeOptions},
+    options::{CommonOptions, MergeOptions, make_session_context},
     record_seeker::RecordSeeker,
     row_key::RowKey,
     tables::load_vcf_core,
@@ -34,12 +34,11 @@ use crate::{
 pub async fn merge_vcfs(
     out: &str,
     vcf: &Vec<String>,
-    unwanted_info: &Vec<String>,
-    reference: &Option<String>,
-    write_merge_table: &Option<String>,
-    options: &MergeOptions,
-    common: &CommonOptions
+    options: Rc<MergeOptions>,
+    common: &CommonOptions,
 ) -> std::io::Result<()> {
+    options.check().map_err(as_io_error)?;
+
     let chroms = load_chroms(&vcf[0])?;
     let chroms = Rc::new(chroms);
     let mut readers = Vec::new();
@@ -78,23 +77,24 @@ pub async fn merge_vcfs(
         .with_column("flip", lit(false))?
         .with_column("criteria", nullif(lit(1), lit(1)))?;
 
-    let results = find_exact(&ctx, orig, n as u32, options).await?;
+    let results = find_exact(&ctx, orig, n as u32, options.as_ref()).await?;
 
-    let results = find_almost_exact(&ctx, results, n as u32, options).await?;
+    let results = find_almost_exact(&ctx, results, n as u32, options.as_ref()).await?;
 
     let mut results = results;
-    let mut repo = None;
-    if let Some(reference_filename) = &reference {
+    if options.allow_breakend_flipping {
+        results = find_backwards_bnds(&ctx, results, n as u32, &options).await?;
+    }
+
+    let mut reference = None;
+    if let Some(reference_filename) = &options.reference {
         let reference_reader =
             fasta::io::indexed_reader::Builder::default().build_from_path(reference_filename)?;
         let adapter = IndexedReader::new(reference_reader);
-        repo = Some(fasta::Repository::new(adapter));
-        if options.allow_breakend_flipping {
-            results = find_backwards_bnds(&ctx, results, n as u32, &options).await?;
-        }
+        reference = Some(Rc::new(fasta::Repository::new(adapter)));
     }
 
-    if let Some(table_out) = &write_merge_table {
+    if let Some(table_out) = &options.write_merge_table {
         let opts = DataFrameWriteOptions::default();
         let csv_opts = CsvOptions::default().with_delimiter(b'\t');
         let csv_opts = Some(csv_opts);
@@ -133,22 +133,18 @@ pub async fn merge_vcfs(
         vix_samples.push(h.sample_names().len());
     }
 
-    let mut header = readers[0].header.clone();
-    *header.sample_names_mut() = SampleNames::from_iter(sample_names.iter().map(|s| s.clone()));
-    add_svelt_header_fields(&mut header, &unwanted_info)?;
-
     let mut seekers = Vec::new();
     for path in vcf.iter() {
         let seeker = RecordSeeker::new(path, chroms.clone())?;
         seekers.push(seeker);
     }
 
-    let writer = autodetect_create(out, autocompress::CompressionLevel::Default)?;
-    let writer = BufWriter::new(writer);
-    let mut writer = vcf::io::Writer::new(writer);
-    writer.write_header(&header)?;
+    let mut header = readers[0].header.clone();
+    *header.sample_names_mut() = SampleNames::from_iter(sample_names.iter().map(|s| s.clone()));
+    add_svelt_header_fields(&mut header, &options.unwanted_info)?;
 
-    let mut current_chrom = String::new();
+    let mut builder = MergeBuilder::new(out, options, header, reference)?;
+
     let mut current_row_key = u32::MAX;
     let mut current_row: Vec<Option<u32>> = (0..n).into_iter().map(|_| None).collect();
     let mut current_row_alts: Vec<Option<String>> = (0..n).into_iter().map(|_| None).collect();
@@ -159,36 +155,11 @@ pub async fn merge_vcfs(
         for field in recs.schema_ref().fields().iter() {
             log::debug!("field: {:?}", field);
         }
-        let row_ids = recs
-            .column_by_name("row_id")
-            .unwrap()
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .unwrap();
-        let row_keys = recs
-            .column_by_name("row_key")
-            .unwrap()
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .unwrap();
-        let alt_seqs = recs
-            .column_by_name("alt_seq")
-            .unwrap()
-            .as_any()
-            .downcast_ref::<GenericStringArray<i32>>()
-            .unwrap();
-        let flips = recs
-            .column_by_name("flip")
-            .unwrap()
-            .as_any()
-            .downcast_ref::<BooleanArray>()
-            .unwrap();
-        let criteria = recs
-            .column_by_name("criteria")
-            .unwrap()
-            .as_any()
-            .downcast_ref::<GenericStringArray<i32>>()
-            .unwrap();
+        let row_ids = get_array::<Int64Array>(&recs, "row_id");
+        let row_keys = get_array::<Int64Array>(&recs, "row_key");
+        let alt_seqs = get_array::<GenericStringArray<i32>>(&recs, "alt_seq");
+        let flips = get_array::<BooleanArray>(&recs, "flip");
+        let criteria = get_array::<GenericStringArray<i32>>(&recs, "criteria");
 
         for i in 0..row_ids.len() {
             let row_id = row_ids.value(i) as u32;
@@ -207,22 +178,13 @@ pub async fn merge_vcfs(
                     }
                 }
                 if !is_empty {
-                    let rec = construct_record(
-                        &header,
+                    builder.construct(
                         recs,
                         &vix_samples,
-                        options.force_alt_tags,
-                        &unwanted_info,
                         &current_row_alts,
                         current_row_flip,
                         &current_row_criteria,
-                        &repo
                     )?;
-                    writer.write_variant_record(&header, &rec)?;
-                    if rec.reference_sequence_name() != &current_chrom {
-                        current_chrom = String::from(rec.reference_sequence_name());
-                        log::info!("writing variants for {}", current_chrom);
-                    }
                 }
 
                 current_row = (0..n).into_iter().map(|_| None).collect();
@@ -259,18 +221,13 @@ pub async fn merge_vcfs(
         }
     }
     if !is_empty {
-        let rec = construct_record(
-            &header,
+        builder.construct(
             recs,
             &vix_samples,
-            options.force_alt_tags,
-            &unwanted_info,
             &current_row_alts,
             current_row_flip,
             &current_row_criteria,
-            &repo
         )?;
-        writer.write_variant_record(&header, &rec)?;
     }
 
     Ok(())
@@ -289,4 +246,12 @@ fn load_chroms(path: &str) -> std::io::Result<ChromSet> {
     }
     let chroms = ChromSet::from(names.as_ref());
     Ok(chroms)
+}
+
+fn get_array<'a, Type: 'static>(recs: &'a RecordBatch, name: &str) -> &'a Type {
+    recs.column_by_name(name)
+        .unwrap()
+        .as_any()
+        .downcast_ref::<Type>()
+        .unwrap()
 }

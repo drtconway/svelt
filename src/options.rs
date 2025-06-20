@@ -1,6 +1,8 @@
 use clap::{ArgAction, Args};
 use datafusion::prelude::{SessionConfig, SessionContext};
 
+use crate::errors::SveltError;
+
 /// Options controlling the merge process
 #[derive(Debug, Args)]
 pub struct MergeOptions {
@@ -16,6 +18,18 @@ pub struct MergeOptions {
     #[arg(long, required = false, default_value = "0.9")]
     pub length_ratio: f64,
 
+    /// Write out the final merge table
+    #[arg(long)]
+    pub write_merge_table: Option<String>,
+
+    /// INFO fields to drop (if they exist)
+    #[arg(short, long, value_delimiter = ',')]
+    pub unwanted_info: Vec<String>,
+
+    /// Reference sequence. Required for some extended type of merging.
+    #[arg(short, long)]
+    pub reference: Option<String>,
+
     /// Force ALTs to be symbolic
     #[arg(long,
         action = ArgAction::Set,
@@ -24,6 +38,14 @@ pub struct MergeOptions {
         num_args = 0..=1,)]
     pub force_alt_tags: bool,
 
+    /// Fill in correct reference bases
+    #[arg(long,
+        action = ArgAction::Set,
+        default_value_t = true,
+        default_missing_value = "true",
+        num_args = 0..=1,)]
+    pub fill_in_refs: bool,
+
     /// Allow breakend variants to be flipped
     #[arg(long,
         action = ArgAction::Set,
@@ -31,6 +53,19 @@ pub struct MergeOptions {
         default_missing_value = "true",
         num_args = 0..=1,)]
     pub allow_breakend_flipping: bool,
+}
+
+impl MergeOptions {
+    /// Check merge options for mutual consistency
+    pub fn check(&self) -> std::result::Result<(), SveltError> {
+        if self.fill_in_refs && self.reference.is_none() {
+            return Err(SveltError::OptionReferenceRequired(String::from("--fill-in-refs")));
+        }
+        if self.allow_breakend_flipping && self.reference.is_none() {
+            return Err(SveltError::OptionReferenceRequired(String::from("--allow-breakend-flipping")));
+        }
+        Ok(())
+    }
 }
 
 /// Options controlling feature indexing

@@ -85,7 +85,7 @@ impl BreakEnd {
         }
     }
 
-    pub fn format(&self, repo: Repository) -> std::io::Result<(String, usize, char, String)> {
+    pub fn format(&self, repo: &Repository) -> std::io::Result<(String, usize, char, String)> {
         let BreakEnd {
             chrom,
             end,
