@@ -221,13 +221,13 @@ pub fn construct_record(
                 continue;
             }
             if let Ok(_) = parse_breakend(alt) {
-                if alt.starts_with('N') || alt.starts_with('N') {
+                if alt.starts_with('N') || alt.starts_with('n') {
                     let seq = reference.clone().unwrap().get(chrom.as_ref()).unwrap()?;
                     let pos = Position::try_from(variant_start).unwrap();
                     let b: &u8 = seq.get(pos).unwrap();
                     let b = *b as char;
                     alternate_bases[i] = format!("{}{}", b, &alt[1..]);
-                } else if alt.ends_with('N') || alt.starts_with('N') {
+                } else if alt.ends_with('N') || alt.starts_with('n') {
                     let seq = reference.clone().unwrap().get(chrom.as_ref()).unwrap()?;
                     let pos = Position::try_from(variant_start).unwrap();
                     let b: &u8 = seq.get(pos).unwrap();
