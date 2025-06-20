@@ -98,7 +98,13 @@ pub struct QueryOptions {
 
     /// Read query sequences from a FASTA file
     #[arg(short, long)]
-    pub query_file: Option<String>
+    pub query_file: Option<String>,
+
+    /// Read query sequences from a VCF (either insersion sequences,
+    /// or from SVELT_ALT_SEQ).
+    #[arg(short, long)]
+    pub vcf: Option<String>,
+
 }
 
 /// Options common to all commands

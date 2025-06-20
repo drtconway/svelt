@@ -20,5 +20,6 @@ pub mod range_joins;
 pub mod record_seeker;
 pub mod resolve;
 pub mod row_key;
+pub mod sequence;
 pub mod tables;
 pub mod vcf_reader;

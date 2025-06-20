@@ -16,9 +16,9 @@ use datafusion::{
     common::JoinType,
     config::{ParquetColumnOptions, TableParquetOptions},
     dataframe::DataFrameWriteOptions,
-    functions_aggregate::{count::count, sum::sum},
+    functions_aggregate::{count::count, expr_fn::first_value, min_max::max, sum::sum},
     prelude::{
-        DataFrame, ParquetReadOptions, SessionContext, cast, col, greatest, least, lit, sqrt,
+        cast, col, greatest, least, lit, sqrt, DataFrame, ParquetReadOptions, SessionContext
     },
     scalar::ScalarValue,
 };
@@ -35,6 +35,7 @@ use crate::{
     expressions::prefix_cols,
     kmers::Kmer,
     options::{CommonOptions, IndexingOptions, QueryOptions, make_session_context},
+    sequence::{FastaSequenceIterator, SequenceIterator, VcfSequenceIterator},
 };
 
 pub async fn index_features(
@@ -201,34 +202,40 @@ pub async fn find_similar(
 ) -> std::io::Result<()> {
     let ctx = make_session_context(common);
 
-    let idx = FeatureIndex::new(features, &ctx).await?;
-
     if let Some(query) = &query.query {
         return find_similar_single(features, query, k, common).await;
     }
 
-    let query_file = query.query_file.as_ref().unwrap();
+    let idx = FeatureIndex::new(features, &ctx).await?;
 
-    let reader = autodetect_open(query_file)?;
-    let reader = BufReader::new(reader);
-    let mut reader = fasta::io::reader::Builder::default().build_from_reader(reader)?;
+    if let Some(query_file) = &query.query_file {
+        let itr = FastaSequenceIterator::new(&query_file)?;
+        find_similar_inner(itr, k, &idx, &ctx).await?;
+    }
 
+    if let Some(vcf_file) = &query.vcf {
+        let itr = VcfSequenceIterator::new(&vcf_file)?;
+        find_similar_inner(itr, k, &idx, &ctx).await?;
+    }
+
+    Ok(())
+}
+
+async fn find_similar_inner<Itr: SequenceIterator>(
+    itr: Itr,
+    k: usize,
+    idx: &FeatureIndex,
+    ctx: &SessionContext,
+) -> std::io::Result<()> {
     let mut curr: Option<DataFrame> = None;
     let mut curr_count: usize = 0;
-    for rec in reader.records() {
-        let rec = rec?;
+    for rec in itr {
+        let (name, sequence) = rec?;
+        log::info!("scanning {} ({}bp)", name, sequence.len());
 
-        let name = String::from_utf8(rec.name().to_vec()).unwrap();
-        log::info!("scanning {}", name);
-
-        let seq = rec.sequence();
-        if seq.len() > 10000 {
-            log::info!("skipping long sequence {} ({} bp)", name, seq.len());
-            continue;
-        }
         let mut fwd = Vec::new();
         let mut rev = Vec::new();
-        Kmer::with_many_both(k, seq, |x, y| {
+        Kmer::with_many_both(k, &sequence, |x, y| {
             fwd.push(x.0);
             rev.push(y.0);
         });
@@ -264,10 +271,22 @@ pub async fn find_similar(
             Some(block)
         };
 
-        if curr_count > 1000000 {
+        if curr_count > 500000 {
             log::info!("ranking over {} k-mers.", curr_count);
             let tbl = curr.take().unwrap();
-            idx.rank_many(tbl).await?;
+            let res = idx.rank_many(tbl).await?;
+            res.aggregate(
+                vec![col("name")],
+                vec![
+                    max(col("dot")).alias("dot"),
+                    first_value(col("idx_name"), Some(vec![col("dot").sort(false, false)]))
+                        .alias("feature"),
+                    first_value(col("class"), Some(vec![col("dot").sort(false, false)]))
+                        .alias("class"),
+                ],
+            )?
+            .show()
+            .await?;
             curr_count = 0;
         }
     }
@@ -278,7 +297,18 @@ pub async fn find_similar(
 
     log::info!("ranking over {} k-mers.", curr_count);
     let all = curr.unwrap();
-    idx.rank_many(all).await?;
+    let res = idx.rank_many(all).await?;
+
+    res.aggregate(
+        vec![col("name")],
+        vec![
+            first_value(col("idx_name"), Some(vec![col("dot").sort(false, false)]))
+                .alias("feature"),
+            first_value(col("class"), Some(vec![col("dot").sort(false, false)])).alias("class"),
+        ],
+    )?
+    .show()
+    .await?;
 
     Ok(())
 }
@@ -788,7 +818,7 @@ impl FeatureIndex {
             .filter(col("nix").is_not_null())?
             .filter(col("dot").gt_eq(lit(0.25)))?;
 
-        if true {
+        if false {
             tbl.clone()
                 .sort(vec![col("dot").sort(false, false)])?
                 .show()
