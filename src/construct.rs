@@ -22,7 +22,7 @@ use noodles::vcf::variant::record_buf::{AlternateBases, Filters, Ids, Info, Samp
 use noodles::vcf::{Header, Record, variant::RecordBuf};
 use vcf::variant::record_buf::info::field::value::Array as InfoArray;
 
-use crate::breakends::BreakEnd;
+use crate::breakends::{BreakEnd, parse_breakend};
 use crate::options::MergeOptions;
 use crate::tables::is_seq;
 
@@ -33,7 +33,7 @@ pub struct MergeBuilder {
     options: Rc<MergeOptions>,
     header: Header,
     reference: Option<Rc<Repository>>,
-    current_chrom: String
+    current_chrom: String,
 }
 
 impl MergeBuilder {
@@ -53,7 +53,7 @@ impl MergeBuilder {
             options,
             header,
             reference,
-            current_chrom: String::new()
+            current_chrom: String::new(),
         })
     }
 
@@ -69,11 +69,10 @@ impl MergeBuilder {
             &self.header,
             recs,
             &vix_samples,
-            self.options.force_alt_tags,
-            &self.options.unwanted_info,
             &alts,
             flip,
             &criteria,
+            self.options.as_ref(),
             &self.reference,
         )?;
         self.writer.write_variant_record(&self.header, &rec)?;
@@ -147,12 +146,11 @@ pub fn construct_record(
     header: &Header,
     recs: Vec<Option<(Rc<Header>, Record)>>,
     vix_samples: &Vec<usize>,
-    force_alt_tags: bool,
-    unwanted_info: &Vec<String>,
     alts: &Vec<Option<String>>,
     flip: bool,
     criteria: &str,
-    repo: &Option<Rc<Repository>>,
+    options: &MergeOptions,
+    reference: &Option<Rc<Repository>>,
 ) -> std::io::Result<RecordBuf> {
     let _ = header;
     let mut the_record = None;
@@ -178,7 +176,7 @@ pub fn construct_record(
     }
     let ids = Ids::from_iter(ids.into_iter());
 
-    let (reference_bases, alternate_bases) = make_ref_and_alt(&the_record, force_alt_tags)?;
+    let (reference_bases, alternate_bases) = make_ref_and_alt(&the_record, options.force_alt_tags)?;
     let mut reference_bases = reference_bases;
     let mut alternate_bases = alternate_bases;
 
@@ -188,7 +186,7 @@ pub fn construct_record(
             .map_err(|e| Error::new(ErrorKind::Other, e))?;
         log::info!("unflipped: {:?}", orig);
         let flipped = orig.flip();
-        let flipped_fmt = flipped.format(repo.clone().unwrap().as_ref())?;
+        let flipped_fmt = flipped.format(reference.clone().unwrap().as_ref())?;
         log::info!("flipped: {:?}", flipped_fmt);
         chrom = flipped_fmt.0;
         variant_start = flipped_fmt.1;
@@ -207,6 +205,37 @@ pub fn construct_record(
     if let Ok(bnd) = BreakEnd::new(&chrom, variant_start.get(), &alternate_bases[0]) {
         chrom2 = Some(bnd.chrom2.clone());
         end2 = Some(bnd.end2);
+    }
+
+    if options.fill_in_refs {
+        if reference_bases == "N" || reference_bases == "n" {
+            let seq = reference.clone().unwrap().get(chrom.as_ref()).unwrap()?;
+            let pos = Position::try_from(variant_start).unwrap();
+            let b: &u8 = seq.get(pos).unwrap();
+            let b = *b as char;
+            reference_bases = String::from(b);
+        }
+        for i in 0..alternate_bases.len() {
+            let alt = &alternate_bases[i] as &str;
+            if is_seq(alt) {
+                continue;
+            }
+            if let Ok(_) = parse_breakend(alt) {
+                if alt.starts_with('N') || alt.starts_with('N') {
+                    let seq = reference.clone().unwrap().get(chrom.as_ref()).unwrap()?;
+                    let pos = Position::try_from(variant_start).unwrap();
+                    let b: &u8 = seq.get(pos).unwrap();
+                    let b = *b as char;
+                    alternate_bases[i] = format!("{}{}", b, &alt[1..]);
+                } else if alt.ends_with('N') || alt.starts_with('N') {
+                    let seq = reference.clone().unwrap().get(chrom.as_ref()).unwrap()?;
+                    let pos = Position::try_from(variant_start).unwrap();
+                    let b: &u8 = seq.get(pos).unwrap();
+                    let b = *b as char;
+                    alternate_bases[i] = format!("{}{}", &alt[0..(alt.len() - 1)], b);
+                }
+            }
+        }
     }
 
     let alternate_bases = AlternateBases::from(alternate_bases);
@@ -276,7 +305,12 @@ pub fn construct_record(
     }
     let info: Vec<(String, Option<InfoValue>)> = info
         .into_iter()
-        .filter(|item| unwanted_info.iter().all(|unwanted| &item.0 != unwanted))
+        .filter(|item| {
+            options
+                .unwanted_info
+                .iter()
+                .all(|unwanted| &item.0 != unwanted)
+        })
         .collect();
     let info = Info::from_iter(info.into_iter());
 

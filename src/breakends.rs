@@ -94,7 +94,7 @@ impl BreakEnd {
             end2,
             side2,
         } = self;
-        let end = max(1, *end); // Urk! Thanks for that Sniffles!
+        let end = max(1, *end); // XXX 0 is actually valid here.
         let pos = Position::try_from(end).unwrap();
         let seq = repo.get(chrom.as_ref()).unwrap()?;
         let b: &u8 = seq.get(pos).unwrap();
