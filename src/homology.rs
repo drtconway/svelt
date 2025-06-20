@@ -48,8 +48,6 @@ pub async fn index_features(
     let mut reader = fasta::io::reader::Builder::default().build_from_reader(reader)?;
 
     let mut names = Vec::new();
-    let mut name_index = HashMap::new();
-
     let mut kmer_index: HashMap<u64, Vec<(usize, usize)>> = HashMap::new();
 
     for rec in reader.records() {
@@ -58,7 +56,6 @@ pub async fn index_features(
 
         let n = names.len();
         names.push(name.clone());
-        name_index.insert(name, n);
 
         let mut fwd = Vec::new();
         Kmer::with_many_both(options.k, rec.sequence(), |x, _y| {
@@ -95,7 +92,7 @@ pub async fn index_features(
     let mut class_builder = StringDictionaryBuilder::<UInt32Type>::new();
     let mut nix_builder = PrimitiveBuilder::<UInt32Type>::new();
 
-    for (orig, nix) in name_index.into_iter() {
+    for (nix, orig) in names.into_iter().enumerate() {
         if let Some(m) = rx.captures(&orig) {
             let name = match &nm {
                 Left(n) => String::from(&m[*n]),
