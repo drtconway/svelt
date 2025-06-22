@@ -66,7 +66,10 @@ sequence involved to being highly homologous.
   the context base at the start which is not part of the insertion.
 - An INFO tag `SVELT_CRITERIA` is generated which contains the criteria
   used for merging the given alleles.
-  
+- If an index of features is supplied, insertion sequences (if present)
+  are classified to show the best matching feature, which is included in
+  the INFO field `SVELT_ALT_CLASS`.
+
 ## TODO
 
 ## Output Generation
@@ -76,10 +79,6 @@ sequence involved to being highly homologous.
 
 ### Additional Merging Rules
 
-- For BNDs, if the *here* end is the same or close, the *there* end might be
-  allowed more latitude (e.g. a couple of hundred bp).
-- For BNDs, if the *here* ends are not close, but the *there* ends are, maybe
-  we should flip the representation, and merge the flipped representation.
 - Sometimes a DUP may be called as an INS because insufficient homology was
   detected, however DUPs at the same location might be considered a prior to
   promote the INS to a DUP, and merge.
