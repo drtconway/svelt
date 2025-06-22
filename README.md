@@ -43,7 +43,10 @@ cargo build --release
    and the ends are within 25bp, we compute the length ratio (shorter/longer),
    and require that to be > 0.9. For BND variants, we require chrom
    to be the same on both, chrom2 to be the same on both, end to be
-   within 25bp, and end2 to be within 25bp.
+   within 25bp, and end2 to be within 150bp.
+3. If BND variants have end2 on the same chromosome and within 25bp, and
+   the end on the same chromosome but within 150bp, we flip them and merge.
+   This can only be done if a genomic reference sequence is supplied.
 
 The use of a window of 25bp is not arbitrary. Many SVs are mediated by
 mobile element sequences which have short repeat sequences at the end
