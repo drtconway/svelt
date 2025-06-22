@@ -13,6 +13,7 @@ pub mod heap;
 pub mod homology;
 pub mod inputs;
 pub mod kmers;
+pub mod kmers_table;
 pub mod merge;
 pub mod near_merge;
 pub mod nearest;

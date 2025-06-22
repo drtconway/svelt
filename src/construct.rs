@@ -64,6 +64,7 @@ impl MergeBuilder {
         alts: &Vec<Option<String>>,
         flip: bool,
         criteria: &str,
+        feature: &str,
     ) -> std::io::Result<()> {
         let rec = construct_record(
             &self.header,
@@ -72,6 +73,7 @@ impl MergeBuilder {
             &alts,
             flip,
             &criteria,
+            feature,
             self.options.as_ref(),
             &self.reference,
         )?;
@@ -134,6 +136,16 @@ pub fn add_svelt_header_fields(
             .map_err(|e| Error::new(ErrorKind::Other, e))?,
     );
 
+    infos.insert(
+        String::from("SVELT_ALT_CLASS"),
+        Builder::default()
+            .set_number(Number::Unknown)
+            .set_type(Type::String)
+            .set_description("Classification of the inserted sequence.")
+            .build()
+            .map_err(|e| Error::new(ErrorKind::Other, e))?,
+    );
+
     for unwanted in unwanted_info.iter() {
         log::info!("removing INFO tag '{}'", unwanted);
         infos.shift_remove(unwanted);
@@ -149,6 +161,7 @@ pub fn construct_record(
     alts: &Vec<Option<String>>,
     flip: bool,
     criteria: &str,
+    feature: &str,
     options: &MergeOptions,
     reference: &Option<Rc<Repository>>,
 ) -> std::io::Result<RecordBuf> {
@@ -301,6 +314,12 @@ pub fn construct_record(
         info.push((
             String::from("SVELT_ALT_SEQ"),
             Some(InfoValue::Array(InfoArray::String(alt_sequences))),
+        ));
+    }
+    if feature.len() > 0 {
+        info.push((
+            String::from("SVELT_ALT_CLASS"),
+            Some(InfoValue::String(String::from(feature))),
         ));
     }
     let info: Vec<(String, Option<InfoValue>)> = info

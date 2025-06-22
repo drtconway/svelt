@@ -15,6 +15,7 @@ pub enum SveltError {
     MissingAlt(String, usize),
     MissingChr2(String, usize),
     MissingInfo(String, usize, String),
+    MissingK(String),
     MissingType(String, usize),
     NeardexDuplicate(u32),
     OptionReferenceRequired(String),
@@ -71,6 +72,9 @@ impl Display for SveltError {
                     field, chrom, pos
                 )
             }
+            SveltError::MissingK(name) => {
+                write!(f, "index '{}' has missing metadata", name)
+            }
             SveltError::MissingType(chrom, pos) => {
                 write!(f, "Variant without SVTYPE at {}:{}", chrom, pos)
             }
@@ -78,7 +82,11 @@ impl Display for SveltError {
                 write!(f, "Cannot construct Neardex with duplicate key {}", key)
             }
             SveltError::OptionReferenceRequired(opt) => {
-                write!(f, "Option '{}' requires a reference sequence to be given", opt)
+                write!(
+                    f,
+                    "Option '{}' requires a reference sequence to be given",
+                    opt
+                )
             }
         }
     }

@@ -30,6 +30,10 @@ pub struct MergeOptions {
     #[arg(short, long)]
     pub reference: Option<String>,
 
+    /// Use a pre-indexed set of sequences to annotate inserted sequences
+    #[arg(long)]
+    pub annotate_insertions: Option<String>,
+
     /// Force ALTs to be symbolic
     #[arg(long,
         action = ArgAction::Set,

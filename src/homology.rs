@@ -11,15 +11,13 @@ use datafusion::{
             Array, Float64Array, GenericStringArray, PrimitiveArray, PrimitiveBuilder, RecordBatch,
             StringDictionaryBuilder,
         },
-        datatypes::{DataType, Field, Float64Type, Int32Type, Schema, UInt32Type, UInt64Type},
+        datatypes::{DataType, Field, Float64Type, Schema, UInt32Type, UInt64Type},
     },
     common::JoinType,
     config::{ParquetColumnOptions, TableParquetOptions},
     dataframe::DataFrameWriteOptions,
     functions_aggregate::{count::count, expr_fn::first_value, min_max::max, sum::sum},
-    prelude::{
-        DataFrame, ParquetReadOptions, SessionContext, cast, col, greatest, least, lit, sqrt,
-    },
+    prelude::{DataFrame, ParquetReadOptions, SessionContext, cast, col, lit, sqrt},
     scalar::ScalarValue,
 };
 use itertools::Itertools;
@@ -33,8 +31,10 @@ use crate::{
     disjoint_set::DisjointSet,
     distance::{DistanceMetric, distance},
     either::Either::{self, Left, Right},
+    errors::{SveltError, as_io_error},
     expressions::prefix_cols,
     kmers::Kmer,
+    kmers_table::kmer_frequencies_to_table,
     options::{CommonOptions, IndexingOptions, QueryOptions, make_session_context},
     sequence::{FastaSequenceIterator, SequenceIterator, VcfSequenceIterator},
 };
@@ -187,6 +187,9 @@ pub async fn index_features(
     kidx_opts
         .column_specific_options
         .insert(String::from("kmer"), kmer_opts);
+    kidx_opts
+        .key_value_metadata
+        .insert(String::from("k"), Some(options.k.to_string()));
 
     df.sort_by(vec![col("kmer"), col("nix")])?
         .write_parquet(&format!("{}-kidx.parquet", out), opts, Some(kidx_opts))
@@ -642,7 +645,8 @@ pub async fn cluster_sequences(
     Ok(())
 }
 
-struct FeatureIndex {
+pub struct FeatureIndex {
+    k: usize,
     kmers: DataFrame,
     names: DataFrame,
 }
@@ -650,10 +654,21 @@ struct FeatureIndex {
 impl FeatureIndex {
     pub async fn new(features: &str, ctx: &SessionContext) -> std::io::Result<FeatureIndex> {
         log::info!("loading index '{}'", features);
-        let opts = ParquetReadOptions::default();
+        let opts = ParquetReadOptions::default().skip_metadata(false);
         let kmers = ctx
             .read_parquet(&format!("{}-kidx.parquet", features), opts.clone())
             .await?;
+        let meta = kmers.schema().metadata();
+        let k: usize = if let Some(k_str) = meta.get("k") {
+            if let Ok(k) = k_str.parse() {
+                k
+            } else {
+                return Err(as_io_error(SveltError::MissingK(String::from(features))));
+            }
+        } else {
+            return Err(as_io_error(SveltError::MissingK(String::from(features))));
+        };
+
         let names = ctx
             .read_parquet(&format!("{}-nidx.parquet", features), opts)
             .await?;
@@ -663,7 +678,11 @@ impl FeatureIndex {
 
         log::info!("loading index done.");
 
-        Ok(FeatureIndex { kmers, names })
+        Ok(FeatureIndex { k, kmers, names })
+    }
+
+    pub fn k(&self) -> usize {
+        self.k
     }
 
     pub async fn rank(&self, query: DataFrame) -> std::io::Result<DataFrame> {
@@ -690,40 +709,18 @@ impl FeatureIndex {
         let subject = self.kmers.clone().with_column_renamed("nix", "name")?;
 
         let res = distance(queries, subject, DistanceMetric::Cosine).await?;
-
+        let res = res
+            .join(
+                self.names.clone(),
+                JoinType::Left,
+                &["subject_name"],
+                &["idx_nix"],
+                None,
+            )?
+            .drop_columns(&["subject_name", "idx_nix"])?
+            .with_column_renamed("idx_name", "subject_name")?;
         Ok(res)
     }
-}
-
-async fn kmer_frequencies_to_table(
-    items: &Vec<(u64, usize)>,
-    ctx: &SessionContext,
-) -> std::io::Result<DataFrame> {
-    let mut kmer_builder = PrimitiveBuilder::<UInt64Type>::new();
-    let mut count_builder = PrimitiveBuilder::<Int32Type>::new();
-
-    for (x, c) in items.iter() {
-        kmer_builder.append_value(*x);
-        count_builder.append_value(*c as i32);
-    }
-
-    let kmer_array = kmer_builder.finish();
-    let count_array = count_builder.finish();
-
-    let kmer_schema = Arc::new(Schema::new(vec![
-        Field::new("kmer", DataType::UInt64, false),
-        Field::new("count", DataType::Int32, false),
-    ]));
-
-    let recs = RecordBatch::try_new(
-        kmer_schema,
-        vec![Arc::new(kmer_array), Arc::new(count_array)],
-    )
-    .map_err(|e| Error::new(ErrorKind::Other, e))?;
-
-    let df = ctx.read_batch(recs)?;
-
-    Ok(df)
 }
 
 struct MergeIterator<'a> {

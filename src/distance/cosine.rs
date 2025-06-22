@@ -12,8 +12,6 @@ use crate::expressions::prefix_cols;
 /// The output is a dataframe with columns `query_name` `subject_name` `distance`.
 ///
 pub async fn cosine(query: DataFrame, subject: DataFrame) -> std::io::Result<DataFrame> {
-    log::info!("evaluating cosine measure");
-
     let query = prefix_cols(query, "query")?;
     let subject = prefix_cols(subject, "subject")?;
 
@@ -68,7 +66,7 @@ pub async fn cosine(query: DataFrame, subject: DataFrame) -> std::io::Result<Dat
                 - col("distance_numerator") * lit(1.0) / (col("query_mag") * col("subject_mag")),
         )?;
 
-    if true {
+    if false {
         tbl.clone()
             .sort_by(vec![col("distance")])?
             .show()

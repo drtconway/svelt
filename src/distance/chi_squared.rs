@@ -12,8 +12,6 @@ use crate::expressions::prefix_cols;
 /// The output is a dataframe with columns `query_name` `subject_name` `distance`.
 ///
 pub async fn chi_squared(query: DataFrame, subject: DataFrame) -> std::io::Result<DataFrame> {
-    log::info!("evaluating chi-squared measure");
-
     let chi_squared_cdf = datafusion_statrs::distribution::chi_squared::cdf();
 
     let query = prefix_cols(query, "query")?;

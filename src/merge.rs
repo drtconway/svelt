@@ -1,16 +1,27 @@
 use std::{
     io::{BufRead, Error, ErrorKind},
     rc::Rc,
+    time::Instant,
 };
 
 use datafusion::{
     arrow::{
-        array::{BooleanArray, GenericStringArray, Int64Array, RecordBatch},
+        array::{
+            Array, BooleanArray, GenericStringArray, Int64Array, RecordBatch, StringViewArray,
+        },
         datatypes::DataType,
     },
+    common::JoinType,
     config::CsvOptions,
     dataframe::DataFrameWriteOptions,
-    prelude::{DataFrame, cast, col, lit, nullif, to_hex},
+    functions_aggregate::{
+        expr_fn::first_value,
+        min_max::min,
+    },
+    prelude::{
+        DataFrame, SessionContext, cast, col, concat, length, lit, nullif, substr, substring,
+        to_hex,
+    },
 };
 use noodles::{
     fasta::{self, repository::adapters::IndexedReader},
@@ -24,6 +35,8 @@ use crate::{
     construct::{MergeBuilder, add_svelt_header_fields},
     errors::as_io_error,
     exact::find_exact,
+    homology::FeatureIndex,
+    kmers_table::kmers_table,
     options::{CommonOptions, MergeOptions, make_session_context},
     record_seeker::RecordSeeker,
     row_key::RowKey,
@@ -94,13 +107,66 @@ pub async fn merge_vcfs(
         reference = Some(Rc::new(fasta::Repository::new(adapter)));
     }
 
+    results = results.with_column("seq_hash", to_hex(col("seq_hash")))?;
+
+    if let Some(features) = &options.annotate_insertions {
+        let ins = results
+            .clone()
+            .select(vec![
+                col("seq_hash"),
+                length(col("alt_seq")).alias("length"),
+                col("alt_seq"),
+            ])?
+            .distinct()?;
+
+        let ins = ins.collect().await?;
+        let classifications = find_classifications(ins, features, &ctx).await?;
+        if let Some(classifications) = classifications {
+            let classifications = classifications.filter(col("distance").lt(lit(0.5)))?;
+
+            if false {
+                classifications
+                    .clone()
+                    .sort_by(vec![col("distance")])?
+                    .show()
+                    .await?;
+            }
+
+            results = results
+                .join(
+                    classifications,
+                    JoinType::Left,
+                    &["seq_hash"],
+                    &["query_name"],
+                    None,
+                )?
+                .drop_columns(&["query_name"])?
+                .with_column("feature", concat(vec![lit(""), col("feature")]))?
+                .with_column("class", concat(vec![lit(""), col("class")]))?
+                .with_column("strand", concat(vec![lit(""), col("strand")]))?;
+        } else {
+            log::warn!(
+                "insertion sequence classifications requested, but none found in {}.",
+                features
+            );
+            results = results
+                .with_column("feature", lit(""))?
+                .with_column("class", lit(""))?
+                .with_column("strand", lit(""))?;
+        }
+    } else {
+        results = results
+            .with_column("feature", lit(""))?
+            .with_column("class", lit(""))?
+            .with_column("strand", lit(""))?;
+    }
+
     if let Some(table_out) = &options.write_merge_table {
         let opts = DataFrameWriteOptions::default();
         let csv_opts = CsvOptions::default().with_delimiter(b'\t');
         let csv_opts = Some(csv_opts);
         results
             .clone()
-            .with_column("seq_hash", to_hex(col("seq_hash")))?
             .sort_by(vec![
                 col("chrom_id"),
                 col("start"),
@@ -150,6 +216,9 @@ pub async fn merge_vcfs(
     let mut current_row_alts: Vec<Option<String>> = (0..n).into_iter().map(|_| None).collect();
     let mut current_row_flip = false;
     let mut current_row_criteria = String::new();
+    let mut current_row_feature = String::new();
+    let mut current_row_class = String::new();
+    let mut current_row_strand = String::new();
 
     for recs in table.into_iter() {
         for field in recs.schema_ref().fields().iter() {
@@ -160,6 +229,9 @@ pub async fn merge_vcfs(
         let alt_seqs = get_array::<GenericStringArray<i32>>(&recs, "alt_seq");
         let flips = get_array::<BooleanArray>(&recs, "flip");
         let criteria = get_array::<GenericStringArray<i32>>(&recs, "criteria");
+        let feature = get_array::<StringViewArray>(&recs, "feature");
+        let class = get_array::<StringViewArray>(&recs, "class");
+        let strand = get_array::<StringViewArray>(&recs, "strand");
 
         for i in 0..row_ids.len() {
             let row_id = row_ids.value(i) as u32;
@@ -178,12 +250,21 @@ pub async fn merge_vcfs(
                     }
                 }
                 if !is_empty {
+                    let feat = if current_row_feature.len() > 0 {
+                        format!(
+                            "{}/{}{}",
+                            current_row_class, current_row_feature, current_row_strand
+                        )
+                    } else {
+                        String::new()
+                    };
                     builder.construct(
                         recs,
                         &vix_samples,
                         &current_row_alts,
                         current_row_flip,
                         &current_row_criteria,
+                        &feat,
                     )?;
                 }
 
@@ -192,6 +273,9 @@ pub async fn merge_vcfs(
                 current_row_alts = (0..n).into_iter().map(|_| None).collect();
                 current_row_flip = false;
                 current_row_criteria = String::new();
+                current_row_feature = String::new();
+                current_row_class = String::new();
+                current_row_strand = String::new();
             }
 
             let (vix, rn) = RowKey::decode(row_id);
@@ -208,6 +292,13 @@ pub async fn merge_vcfs(
             if crit.len() > current_row_criteria.len() {
                 current_row_criteria = String::from(crit);
             }
+
+            let feat = feature.value(i);
+            if feat.len() > 0 {
+                current_row_feature = String::from(feature.value(i));
+                current_row_class = String::from(class.value(i));
+                current_row_strand = String::from(strand.value(i));
+            }
         }
     }
     log::debug!("flushing group: {} {:?}", current_row_key, current_row);
@@ -221,12 +312,22 @@ pub async fn merge_vcfs(
         }
     }
     if !is_empty {
+        let feat = if current_row_feature.len() > 0 {
+            format!(
+                "{}/{}{}",
+                current_row_class, current_row_feature, current_row_strand
+            )
+        } else {
+            String::new()
+        };
+
         builder.construct(
             recs,
             &vix_samples,
             &current_row_alts,
             current_row_flip,
             &current_row_criteria,
+            &feat,
         )?;
     }
 
@@ -254,4 +355,184 @@ fn get_array<'a, Type: 'static>(recs: &'a RecordBatch, name: &str) -> &'a Type {
         .as_any()
         .downcast_ref::<Type>()
         .unwrap()
+}
+
+async fn find_classifications(
+    batch: Vec<RecordBatch>,
+    features: &str,
+    ctx: &SessionContext,
+) -> std::io::Result<Option<DataFrame>> {
+    let idx = FeatureIndex::new(features, &ctx).await?;
+
+    let k = idx.k();
+
+    log::info!("classifying insertion sequences with '{}'", features);
+    let now = Instant::now();
+
+    let itr = batch.iter().flat_map(|recs| MergeIterator::new(recs));
+
+    let mut result: Option<DataFrame> = None;
+    let mut total_ins_sequences: usize = 0;
+
+    let mut curr: Option<DataFrame> = None;
+    let mut seq_count = 0;
+    let mut curr_count: usize = 0;
+    for rec in itr {
+        total_ins_sequences += 1;
+        seq_count += 1;
+        let (name, sequence) = rec;
+        if sequence.len() > 16384 {
+            log::info!("long insertion: {} ({}bp)", name, sequence.len());
+        }
+
+        let (block, count) = kmers_table(sequence, k, ctx).await?;
+        let block = block
+            .with_column("name", concat(vec![col("strand"), lit(name)]))?
+            .drop_columns(&["strand"])?;
+
+        curr = if let Some(block0) = curr {
+            Some(block0.union(block)?)
+        } else {
+            Some(block)
+        };
+        curr_count += count;
+
+        if curr_count > 1000000 {
+            log::debug!(
+                "ranking over {} sequences with {} k-mers.",
+                seq_count,
+                curr_count
+            );
+            let tbl = curr.take().unwrap();
+            let res = idx.rank_many(tbl).await?;
+            let res = materialise(res, &ctx).await?;
+            let res = res
+                .with_column("strand", substring(col("query_name"), lit(1), lit(1)))?
+                .with_column("query_name", substr(col("query_name"), lit(2)))?;
+            let res = res.aggregate(
+                vec![col("query_name")],
+                vec![
+                    min(col("distance")).alias("distance"),
+                    first_value(
+                        col("subject_name"),
+                        Some(vec![col("distance").sort(true, false)]),
+                    )
+                    .alias("feature"),
+                    first_value(col("class"), Some(vec![col("distance").sort(true, false)]))
+                        .alias("class"),
+                    first_value(col("strand"), Some(vec![col("distance").sort(true, false)]))
+                        .alias("strand"),
+                ],
+            )?;
+            if let Some(result0) = result {
+                result = Some(result0.union(res)?);
+            } else {
+                result = Some(res);
+            }
+            seq_count = 0;
+            curr_count = 0;
+        }
+    }
+
+    if let Some(tbl) = curr {
+        log::debug!(
+            "ranking over {} sequences with {} k-mers.",
+            seq_count,
+            curr_count
+        );
+
+        let res = idx.rank_many(tbl).await?;
+        let res = materialise(res, &ctx).await?;
+        let res = res
+            .with_column("strand", substring(col("query_name"), lit(1), lit(1)))?
+            .with_column("query_name", substr(col("query_name"), lit(2)))?;
+        let res = res.aggregate(
+            vec![col("query_name")],
+            vec![
+                min(col("distance")).alias("distance"),
+                first_value(
+                    col("subject_name"),
+                    Some(vec![col("distance").sort(true, false)]),
+                )
+                .alias("feature"),
+                first_value(col("class"), Some(vec![col("distance").sort(true, false)]))
+                    .alias("class"),
+                first_value(col("strand"), Some(vec![col("distance").sort(true, false)]))
+                    .alias("strand"),
+            ],
+        )?;
+        if let Some(result0) = result {
+            result = Some(result0.union(res)?);
+        } else {
+            result = Some(res);
+        }
+    }
+
+    if false {
+        if let Some(tbl) = &result {
+            tbl.clone().show().await?;
+        } else {
+            log::info!("no results!");
+        }
+    }
+
+    log::info!(
+        "classified {} sequences in {}s.",
+        total_ins_sequences,
+        now.elapsed().as_secs_f32()
+    );
+
+    Ok(result)
+}
+
+async fn materialise(df: DataFrame, ctx: &SessionContext) -> std::io::Result<DataFrame> {
+    let batches = df.collect().await?;
+    let df = ctx.read_batches(batches)?;
+    Ok(df)
+}
+
+struct MergeIterator<'a> {
+    seq_hash: &'a GenericStringArray<i32>,
+    alt_seq: &'a GenericStringArray<i32>,
+    i: usize,
+}
+
+impl<'a> MergeIterator<'a> {
+    pub fn new(recs: &'a RecordBatch) -> MergeIterator<'a> {
+        for field in recs.schema_ref().fields().iter() {
+            log::debug!("field: {:?}", field);
+        }
+        let seq_hash = Self::get_array::<GenericStringArray<i32>>(recs, "seq_hash");
+        let alt_seq = Self::get_array::<GenericStringArray<i32>>(recs, "alt_seq");
+        MergeIterator {
+            seq_hash,
+            alt_seq,
+            i: 0,
+        }
+    }
+
+    fn get_array<Type: 'static>(recs: &'a RecordBatch, name: &str) -> &'a Type {
+        recs.column_by_name(name)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Type>()
+            .unwrap()
+    }
+}
+
+impl<'a> Iterator for MergeIterator<'a> {
+    type Item = (&'a str, &'a str);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.i < self.seq_hash.len() {
+            let i = self.i;
+            self.i += 1;
+
+            let seq_hash = self.seq_hash.value(i);
+            let alt_seq = self.alt_seq.value(i);
+            Some((seq_hash, alt_seq))
+        } else {
+            None
+        }
+    }
 }
