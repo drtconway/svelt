@@ -4,6 +4,7 @@ pub mod breakends;
 pub mod chroms;
 pub mod construct;
 pub mod disjoint_set;
+pub mod distance;
 pub mod either;
 pub mod errors;
 pub mod exact;

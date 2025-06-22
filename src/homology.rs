@@ -18,7 +18,7 @@ use datafusion::{
     dataframe::DataFrameWriteOptions,
     functions_aggregate::{count::count, expr_fn::first_value, min_max::max, sum::sum},
     prelude::{
-        cast, col, greatest, least, lit, sqrt, DataFrame, ParquetReadOptions, SessionContext
+        DataFrame, ParquetReadOptions, SessionContext, cast, col, greatest, least, lit, sqrt,
     },
     scalar::ScalarValue,
 };
@@ -31,6 +31,7 @@ use regex::Regex;
 
 use crate::{
     disjoint_set::DisjointSet,
+    distance::{DistanceMetric, distance},
     either::Either::{self, Left, Right},
     expressions::prefix_cols,
     kmers::Kmer,
@@ -351,7 +352,7 @@ async fn find_similar_single(
     let rev = idx.rank(rev).await?.with_column("strand", lit("-"))?;
 
     fwd.union(rev)?
-        .sort(vec![col("dot").sort(false, false)])?
+        .sort(vec![col("distance").sort(true, false)])?
         .show()
         .await?;
 
@@ -420,7 +421,7 @@ pub async fn cluster_sequences(
     log::info!("ranking over {} k-mers.", curr_count);
     let all = curr.unwrap();
 
-    let mag = all
+    let _mag = all
         .clone()
         .clone()
         .aggregate(
@@ -643,7 +644,6 @@ pub async fn cluster_sequences(
 
 struct FeatureIndex {
     kmers: DataFrame,
-    freqs: DataFrame,
     names: DataFrame,
 }
 
@@ -654,9 +654,6 @@ impl FeatureIndex {
         let kmers = ctx
             .read_parquet(&format!("{}-kidx.parquet", features), opts.clone())
             .await?;
-        let kmers = kmers
-            .with_column_renamed("kmer", "idx_kmer")?
-            .with_column_renamed("count", "idx_count")?;
         let names = ctx
             .read_parquet(&format!("{}-nidx.parquet", features), opts)
             .await?;
@@ -664,168 +661,37 @@ impl FeatureIndex {
             .with_column_renamed("name", "idx_name")?
             .with_column_renamed("nix", "idx_nix")?;
 
-        let freqs = kmers
-            .clone()
-            .aggregate(
-                vec![col("nix")],
-                vec![sum(col("idx_count") * col("idx_count")).alias("idx_mag")],
-            )?
-            .with_column("idx_mag", sqrt(col("idx_mag")))?
-            .with_column_renamed("nix", "idx_nix")?;
-
         log::info!("loading index done.");
 
-        Ok(FeatureIndex {
-            kmers,
-            freqs,
-            names,
-        })
+        Ok(FeatureIndex { kmers, names })
     }
 
-    pub async fn rank(&self, other: DataFrame) -> std::io::Result<DataFrame> {
-        let mag = other
-            .clone()
-            .aggregate(vec![], vec![sum(col("count") * col("count")).alias("mag")])?
-            .with_column("mag", sqrt(col("mag")))?;
-        let mag = mag.collect().await?[0]
-            .column(0)
-            .as_any()
-            .downcast_ref::<Float64Array>()
-            .unwrap()
-            .value(0);
+    pub async fn rank(&self, query: DataFrame) -> std::io::Result<DataFrame> {
+        let query = query.with_column("name", lit("query"))?;
 
-        let tbl = self.kmers.clone().join(
-            other.clone(),
-            JoinType::Right,
-            &["idx_kmer"],
-            &["kmer"],
-            None,
-        )?;
+        let subject = self.kmers.clone().with_column_renamed("nix", "name")?;
 
-        if false {
-            tbl.clone().show().await?;
-        }
-
-        let tbl = tbl.aggregate(
-            vec![col("nix")],
-            vec![sum(col("idx_count") * col("count")).alias("raw_dot")],
-        )?;
-
-        if false {
-            tbl.clone()
-                .sort(vec![col("raw_dot").sort(false, false)])?
-                .show()
-                .await?;
-        }
-
-        let tbl = tbl
-            .join(
-                self.freqs.clone(),
-                JoinType::Left,
-                &["nix"],
-                &["idx_nix"],
-                None,
-            )?
-            .drop_columns(&["idx_nix"])?
-            .with_column("mag", lit(mag))?
-            .with_column(
-                "dot",
-                col("raw_dot") * lit(1.0) / (col("idx_mag") * col("mag")),
-            )?
+        let res = distance(query, subject, DistanceMetric::Cosine).await?;
+        let res = res
             .join(
                 self.names.clone(),
                 JoinType::Left,
-                &["nix"],
+                &["subject_name"],
                 &["idx_nix"],
                 None,
             )?
-            .drop_columns(&["idx_nix"])?
-            .filter(col("nix").is_not_null())?
-            .with_column_renamed("idx_name", "name")?;
+            .drop_columns(&["subject_name", "idx_nix"])?
+            .with_column_renamed("idx_name", "subject_name")?;
 
-        if false {
-            tbl.clone()
-                .sort(vec![col("dot").sort(false, false)])?
-                .show()
-                .await?;
-        }
-
-        Ok(tbl)
+        Ok(res)
     }
 
     pub async fn rank_many(&self, queries: DataFrame) -> std::io::Result<DataFrame> {
-        if false {
-            queries.clone().show().await?;
-        }
+        let subject = self.kmers.clone().with_column_renamed("nix", "name")?;
 
-        let mag = queries
-            .clone()
-            .aggregate(
-                vec![col("name"), col("strand")],
-                vec![sum(col("count") * col("count")).alias("mag")],
-            )?
-            .with_column("mag", sqrt(col("mag")))?
-            .with_column_renamed("name", "mag_name")?
-            .with_column_renamed("strand", "mag_strand")?;
+        let res = distance(queries, subject, DistanceMetric::Cosine).await?;
 
-        let tbl = self.kmers.clone().join(
-            queries.clone(),
-            JoinType::Right,
-            &["idx_kmer"],
-            &["kmer"],
-            None,
-        )?;
-
-        if false {
-            tbl.clone().show().await?;
-        }
-
-        let tbl = tbl.aggregate(
-            vec![col("name"), col("nix"), col("strand")],
-            vec![sum(col("idx_count") * col("count")).alias("raw_dot")],
-        )?;
-
-        if false {
-            tbl.clone()
-                .sort(vec![col("raw_dot").sort(false, false)])?
-                .show()
-                .await?;
-        }
-
-        let tbl = tbl
-            .join(
-                self.freqs.clone(),
-                JoinType::Left,
-                &["nix"],
-                &["idx_nix"],
-                None,
-            )?
-            .drop_columns(&["idx_nix"])?
-            .join(mag, JoinType::Left, &["name"], &["mag_name"], None)?
-            .drop_columns(&["mag_name"])?
-            .with_column(
-                "dot",
-                col("raw_dot") * lit(1.0) / (col("idx_mag") * col("mag")),
-            )?
-            .join(
-                self.names.clone(),
-                JoinType::Left,
-                &["nix"],
-                &["idx_nix"],
-                None,
-            )?
-            .drop_columns(&["idx_nix"])?
-            .filter(col("nix").is_not_null())?
-            .filter(col("dot").gt_eq(lit(0.25)))?;
-
-        if false {
-            tbl.clone()
-                .sort(vec![col("dot").sort(false, false)])?
-                .show()
-                .await?;
-        }
-
-        Ok(tbl)
+        Ok(res)
     }
 }
 
