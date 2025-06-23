@@ -34,6 +34,10 @@ use crate::{
     vcf_reader::VcfReader,
 };
 
+mod classify;
+mod exact;
+mod union;
+
 pub async fn merge_vcfs(
     out: &str,
     vcf: &Vec<String>,
@@ -340,5 +344,3 @@ fn get_array<'a, Type: 'static>(recs: &'a RecordBatch, name: &str) -> &'a Type {
         .downcast_ref::<Type>()
         .unwrap()
 }
-
-mod classify;
