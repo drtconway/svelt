@@ -139,16 +139,7 @@ pub async fn merge_vcfs(
                 "insertion sequence classifications requested, but none found in {}.",
                 features
             );
-            results = results
-                .with_column("feature", lit(""))?
-                .with_column("class", lit(""))?
-                .with_column("strand", lit(""))?;
         }
-    } else {
-        results = results
-            .with_column("feature", lit(""))?
-            .with_column("class", lit(""))?
-            .with_column("strand", lit(""))?;
     }
 
     if let Some(table_out) = &options.write_merge_table {
@@ -199,6 +190,7 @@ pub async fn merge_vcfs(
     *header.sample_names_mut() = SampleNames::from_iter(sample_names.iter().map(|s| s.clone()));
     add_svelt_header_fields(&mut header, &options.unwanted_info)?;
 
+    let annot = options.annotate_insertions.is_some();
     let mut builder = MergeBuilder::new(out, options, header, reference)?;
 
     let mut current_row_key = u32::MAX;
@@ -206,9 +198,7 @@ pub async fn merge_vcfs(
     let mut current_row_alts: Vec<Option<String>> = (0..n).into_iter().map(|_| None).collect();
     let mut current_row_flip = false;
     let mut current_row_criteria = String::new();
-    let mut current_row_feature = String::new();
-    let mut current_row_class = String::new();
-    let mut current_row_strand = String::new();
+    let mut current_row_classification = None;
 
     for recs in table.into_iter() {
         for field in recs.schema_ref().fields().iter() {
@@ -219,9 +209,14 @@ pub async fn merge_vcfs(
         let alt_seqs = get_array::<GenericStringArray<i32>>(&recs, "alt_seq");
         let flips = get_array::<BooleanArray>(&recs, "flip");
         let criteria = get_array::<GenericStringArray<i32>>(&recs, "criteria");
-        let feature = get_array::<StringViewArray>(&recs, "feature");
-        let class = get_array::<StringViewArray>(&recs, "class");
-        let strand = get_array::<StringViewArray>(&recs, "strand");
+        let classifications = if annot {
+            let feature = get_array::<StringViewArray>(&recs, "feature");
+            let class = get_array::<StringViewArray>(&recs, "class");
+            let strand = get_array::<StringViewArray>(&recs, "strand");
+            Some((feature, class, strand))
+        } else {
+            None
+        };
 
         for i in 0..row_ids.len() {
             let row_id = row_ids.value(i) as u32;
@@ -240,14 +235,12 @@ pub async fn merge_vcfs(
                     }
                 }
                 if !is_empty {
-                    let feat = if current_row_feature.len() > 0 {
-                        format!(
-                            "{}/{}{}",
-                            current_row_class, current_row_feature, current_row_strand
-                        )
+                    let feat = if let Some((feature, class, strand)) = &current_row_classification {
+                        format!("{}/{}{}", class, feature, strand)
                     } else {
                         String::new()
                     };
+
                     builder.construct(
                         recs,
                         &vix_samples,
@@ -263,9 +256,7 @@ pub async fn merge_vcfs(
                 current_row_alts = (0..n).into_iter().map(|_| None).collect();
                 current_row_flip = false;
                 current_row_criteria = String::new();
-                current_row_feature = String::new();
-                current_row_class = String::new();
-                current_row_strand = String::new();
+                current_row_classification = None;
             }
 
             let (vix, rn) = RowKey::decode(row_id);
@@ -283,11 +274,15 @@ pub async fn merge_vcfs(
                 current_row_criteria = String::from(crit);
             }
 
-            let feat = feature.value(i);
-            if feat.len() > 0 {
-                current_row_feature = String::from(feature.value(i));
-                current_row_class = String::from(class.value(i));
-                current_row_strand = String::from(strand.value(i));
+            if let Some((feature, class, strand)) = &classifications {
+                let feat = feature.value(i);
+                if feat.len() > 0 {
+                    current_row_classification = Some((
+                        String::from(feature.value(i)),
+                        String::from(class.value(i)),
+                        String::from(strand.value(i)),
+                    ));
+                }
             }
         }
     }
@@ -302,11 +297,8 @@ pub async fn merge_vcfs(
         }
     }
     if !is_empty {
-        let feat = if current_row_feature.len() > 0 {
-            format!(
-                "{}/{}{}",
-                current_row_class, current_row_feature, current_row_strand
-            )
+        let feat = if let Some((feature, class, strand)) = &current_row_classification {
+            format!("{}/{}{}", class, feature, strand)
         } else {
             String::new()
         };
