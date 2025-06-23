@@ -12,6 +12,13 @@ pub(crate) async fn find_classifications(
     features: &str,
     ctx: &SessionContext,
 ) -> std::io::Result<Option<DataFrame>> {
+
+    let n: usize = batch.iter().map(|recs| recs.num_rows()).sum();
+    log::info!("number of sequences to classify: {}", n);
+    if n == 0 {
+        return Ok(None);
+    }
+
     let idx = FeatureIndex::new(features, &ctx).await?;
 
     let k = idx.k();

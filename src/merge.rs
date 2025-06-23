@@ -99,6 +99,7 @@ pub async fn merge_vcfs(
 
     results = results.with_column("seq_hash", to_hex(col("seq_hash")))?;
 
+    let mut annot = false;
     if let Some(features) = &options.annotate_insertions {
         let ins = results
             .clone()
@@ -107,6 +108,7 @@ pub async fn merge_vcfs(
                 length(col("alt_seq")).alias("length"),
                 col("alt_seq"),
             ])?
+            .filter(length(col("alt_seq")).gt(lit(0)))?
             .distinct()?;
 
         let ins = ins.collect().await?;
@@ -134,6 +136,7 @@ pub async fn merge_vcfs(
                 .with_column("feature", concat(vec![lit(""), col("feature")]))?
                 .with_column("class", concat(vec![lit(""), col("class")]))?
                 .with_column("strand", concat(vec![lit(""), col("strand")]))?;
+            annot = true;
         } else {
             log::warn!(
                 "insertion sequence classifications requested, but none found in {}.",
@@ -190,7 +193,6 @@ pub async fn merge_vcfs(
     *header.sample_names_mut() = SampleNames::from_iter(sample_names.iter().map(|s| s.clone()));
     add_svelt_header_fields(&mut header, &options.unwanted_info)?;
 
-    let annot = options.annotate_insertions.is_some();
     let mut builder = MergeBuilder::new(out, options, header, reference)?;
 
     let mut current_row_key = u32::MAX;
