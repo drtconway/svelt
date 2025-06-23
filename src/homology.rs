@@ -36,7 +36,7 @@ use crate::{
     kmers::Kmer,
     kmers_table::kmer_frequencies_to_table,
     options::{CommonOptions, IndexingOptions, QueryOptions, make_session_context},
-    sequence::{FastaSequenceIterator, SequenceIterator, VcfSequenceIterator},
+    sequence::{fasta::FastaSequenceIterator, SequenceIterator, vcf::VcfSequenceIterator},
 };
 
 pub async fn index_features(
