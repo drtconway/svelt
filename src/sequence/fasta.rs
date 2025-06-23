@@ -21,11 +21,12 @@ impl FastaSequenceIterator {
         let mut sequence = Vec::new();
 
         let r1 = self.reader.read_definition(&mut definition)?;
-        let definition = String::from(&definition[1..]);
 
         if r1 == 0 {
             return Ok(None);
         }
+
+        let definition = String::from(&definition[1..]);
 
         self.reader.read_sequence(&mut sequence)?;
         let sequence = String::from_utf8(sequence).map_err(|e| Error::new(ErrorKind::Other, e))?;

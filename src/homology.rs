@@ -29,14 +29,14 @@ use regex::Regex;
 
 use crate::{
     disjoint_set::DisjointSet,
-    distance::{DistanceMetric, distance},
+    distance::{distance, DistanceMetric},
     either::Either::{self, Left, Right},
-    errors::{SveltError, as_io_error},
+    errors::{as_io_error, SveltError},
     expressions::prefix_cols,
     kmers::Kmer,
     kmers_table::kmer_frequencies_to_table,
-    options::{CommonOptions, IndexingOptions, QueryOptions, make_session_context},
-    sequence::{fasta::FastaSequenceIterator, SequenceIterator, vcf::VcfSequenceIterator},
+    options::{make_session_context, CommonOptions, IndexingOptions, QueryOptions},
+    sequence::{fasta::FastaSequenceIterator, make_kmer_table, vcf::VcfSequenceIterator, SequenceIterator},
 };
 
 pub async fn index_features(
@@ -45,6 +45,11 @@ pub async fn index_features(
     options: &IndexingOptions,
     common: &CommonOptions,
 ) -> std::io::Result<()> {
+    let ctx = make_session_context(common);
+
+    //let xx = FastaSequenceIterator::new(features_name)?;
+    //let yy = make_kmer_table(options.k, xx, &ctx).await?;
+
     let reader = autodetect_open(features_name)?;
     let reader = BufReader::new(reader);
     let mut reader = fasta::io::reader::Builder::default().build_from_reader(reader)?;
@@ -73,8 +78,6 @@ pub async fn index_features(
             kmer_index.entry(x).or_default().push((n, c));
         }
     }
-
-    let ctx = make_session_context(common);
 
     let rx = Regex::new(&options.pattern).map_err(|e| Error::new(ErrorKind::Other, e))?;
     let nm: Either<usize, String> = if let Ok(x) = options.name.parse() {
