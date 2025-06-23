@@ -19,6 +19,7 @@ pub enum SveltError {
     MissingType(String, usize),
     NeardexDuplicate(u32),
     OptionReferenceRequired(String),
+    UnexpectedNull(String),
 }
 
 impl Display for SveltError {
@@ -87,6 +88,9 @@ impl Display for SveltError {
                     "Option '{}' requires a reference sequence to be given",
                     opt
                 )
+            }
+            SveltError::UnexpectedNull(src) => {
+                write!(f, "unexpected null value at {}", src)
             }
         }
     }

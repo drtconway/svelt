@@ -1,4 +1,6 @@
 
+pub mod kmerize;
+
 /// A k-length nucleotide sequence represented as a 64-bit integer.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Debug)]
 pub struct Kmer(pub u64);
