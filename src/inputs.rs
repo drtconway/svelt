@@ -4,11 +4,29 @@ use noodles::vcf::{
 };
 
 use crate::{
-    breakends::{parse_breakend, BreakEndSide}, errors::{as_io_error, SveltError}, tables::is_seq
+    breakends::{BreakEndSide, parse_breakend},
+    errors::{SveltError, as_io_error},
+    tables::is_seq,
 };
 
 pub fn get_svtype(rec: &Record, header: &Header) -> std::io::Result<String> {
     if let Some(Value::String(value)) = rec.info().get(header, "SVTYPE").unwrap()? {
+        if value.contains(':') {
+            let item = value.split(':').next();
+            match item {
+                Some(kind) => {
+                    return Ok(String::from(kind));
+                }
+                None => {
+                    return Err(SveltError::BadKind(
+                        String::from(rec.reference_sequence_name()),
+                        rec.variant_start().unwrap()?.get(),
+                        value.to_string()
+                    ))
+                    .map_err(as_io_error);
+                }
+            }
+        }
         return Ok(String::from(value));
     }
 
@@ -46,7 +64,9 @@ pub fn get_svtype(rec: &Record, header: &Header) -> std::io::Result<String> {
     .map_err(as_io_error)
 }
 
-pub fn get_breakend(rec: &Record) -> std::io::Result<Option<(String, usize, BreakEndSide, BreakEndSide)>> {
+pub fn get_breakend(
+    rec: &Record,
+) -> std::io::Result<Option<(String, usize, BreakEndSide, BreakEndSide)>> {
     if let Some(alt) = rec.alternate_bases().iter().next() {
         let alt = alt?;
 

@@ -8,7 +8,7 @@ pub enum SveltError {
     BadBreakEnd(String),
     BadChr2(String, usize, String, String),
     BadInfoType(String, usize, String, String),
-    BadKind(String),
+    BadKind(String, usize, String),
     Contigs(usize, usize),
     ContigMissing(String, usize),
     ContigOrder(String, usize, usize),
@@ -42,8 +42,8 @@ impl Display for SveltError {
                     chrom, pos, tag, exp
                 )
             }
-            SveltError::BadKind(kind) => {
-                write!(f, "Unexpected SVTYPE '{}'", kind)
+            SveltError::BadKind(chrom, pos, kind) => {
+                write!(f, "Unexpected SVTYPE at {}:{}: '{}'", chrom, pos, kind)
             }
             SveltError::Contigs(exp, got) => write!(
                 f,
