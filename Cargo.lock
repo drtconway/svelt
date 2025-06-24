@@ -3047,6 +3047,7 @@ dependencies = [
  "itertools",
  "log",
  "noodles",
+ "rand 0.9.1",
  "regex",
  "tokio",
 ]
