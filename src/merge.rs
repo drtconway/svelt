@@ -7,6 +7,7 @@ use datafusion::{
     arrow::{
         array::{
             Array, BooleanArray, GenericStringArray, Int64Array, RecordBatch, StringViewArray,
+            UInt32Array,
         },
         datatypes::DataType,
     },
@@ -21,21 +22,23 @@ use noodles::{
 };
 
 use crate::{
-    almost::find_almost_exact,
-    backward::find_backwards_bnds,
     chroms::ChromSet,
-    construct::{MergeBuilder, add_svelt_header_fields},
+    construct::{add_svelt_header_fields, MergeBuilder},
     errors::as_io_error,
-    exact::find_exact,
-    options::{CommonOptions, MergeOptions, make_session_context},
+    merge::{
+        approx::{approx_bnd_join, approx_near_join}, exact::{full_exact_bnd, full_exact_indel_join, full_exact_locus_ins_join}, flip::approx_flipped_bnd_join, union::merge_with
+    },
+    options::{make_session_context, CommonOptions, MergeOptions},
     record_seeker::RecordSeeker,
     row_key::RowKey,
     tables::load_vcf_core,
     vcf_reader::VcfReader,
 };
 
+mod approx;
 mod classify;
 mod exact;
+mod flip;
 mod union;
 
 pub async fn merge_vcfs(
@@ -78,19 +81,44 @@ pub async fn merge_vcfs(
     }
     let orig = acc.unwrap();
     let orig = orig
-        .with_column("row_key", col("row_id"))?
+        .with_column("row_key", cast(col("row_id"), DataType::UInt32))?
         .with_column("vix_count", lit(1))?
-        .with_column("vix_set", cast(col("vix"), DataType::Int64))?
+        .with_column("vix_set", col("vix"))?
         .with_column("flip", lit(false))?
-        .with_column("criteria", nullif(lit(1), lit(1)))?;
+        .with_column("criteria", nullif(lit(""), lit("")))?;
 
-    let results = find_exact(&ctx, orig, n as u32, options.as_ref()).await?;
+    let mut results = orig.clone();
 
-    let results = find_almost_exact(&ctx, results, n as u32, options.as_ref()).await?;
-
-    let mut results = results;
+    if true {
+        log::info!("looking for exact matches on indel type variants");
+        let join = full_exact_indel_join(results.clone(), n)?;
+        results = merge_with(results, join, &ctx, "exact").await?;
+    }
+    if true {
+        log::info!("looking for almost exact matches on insertions");
+        let join = full_exact_locus_ins_join(results.clone(), n)?;
+        results = merge_with(results, join, &ctx, "locus").await?;
+    }
+    if true {
+        log::info!("looking for exact matches on breakends");
+        let join = full_exact_bnd(results.clone(), n)?;
+        results = merge_with(results, join, &ctx, "exact").await?;
+    }
+    if true {
+        log::info!("looking for approximate matches on breakends");
+        let join = approx_bnd_join(results.clone(), n, &options)?;
+        results = merge_with(results, join, &ctx, "approx").await?;
+    }
+    if true {
+        log::info!("looking for nearby matches on indel type variants");
+        let join = approx_near_join(results.clone(), n, &options, &ctx).await?;
+        results = merge_with(results, join, &ctx, "near").await?;
+    }
     if options.allow_breakend_flipping {
-        results = find_backwards_bnds(&ctx, results, n as u32, &options).await?;
+        log::info!("looking for breakends we can flip");
+        let join = approx_flipped_bnd_join(results.clone(), n, &options)?;
+        results = merge_with(results, join, &ctx, "flip").await?;
+
     }
 
     let mut reference = None;
@@ -162,7 +190,24 @@ pub async fn merge_vcfs(
                 col("row_key"),
                 col("row_id"),
             ])?
-            .drop_columns(&["row_num", "chrom_id", "chrom2_id"])?
+            .select_columns(&[
+                "chrom",
+                "start",
+                "end",
+                "kind",
+                "length",
+                "chrom2",
+                "end2",
+                "seq_hash",
+                "vix",
+                "row_id",
+                "row_key",
+                "flip",
+                "vix_set",
+                "vix_count",
+                "criteria",
+                "alt_seq",
+            ])?
             .write_csv(table_out, opts, csv_opts)
             .await?;
     }
@@ -207,11 +252,13 @@ pub async fn merge_vcfs(
     let mut current_row_classification = None;
 
     for recs in table.into_iter() {
-        for field in recs.schema_ref().fields().iter() {
-            log::debug!("field: {:?}", field);
+        if false {
+            for field in recs.schema_ref().fields().iter() {
+                log::info!("field: {:?}", field);
+            }
         }
         let row_ids = get_array::<Int64Array>(&recs, "row_id");
-        let row_keys = get_array::<Int64Array>(&recs, "row_key");
+        let row_keys = get_array::<UInt32Array>(&recs, "row_key");
         let alt_seqs = get_array::<GenericStringArray<i32>>(&recs, "alt_seq");
         let flips = get_array::<BooleanArray>(&recs, "flip");
         let criteria = get_array::<GenericStringArray<i32>>(&recs, "criteria");
@@ -338,6 +385,9 @@ fn load_chroms(path: &str) -> std::io::Result<ChromSet> {
 }
 
 fn get_array<'a, Type: 'static>(recs: &'a RecordBatch, name: &str) -> &'a Type {
+    if false {
+        log::info!("getting {}", name);
+    }
     recs.column_by_name(name)
         .unwrap()
         .as_any()

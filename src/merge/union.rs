@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     io::{Error, ErrorKind},
     sync::Arc,
 };
@@ -7,10 +7,10 @@ use std::{
 use datafusion::{
     arrow::{
         array::{PrimitiveBuilder, RecordBatch, UInt32Array},
-        datatypes::{DataType, Field, Int64Type, Schema, UInt32Type},
+        datatypes::{DataType, Field, Schema, UInt32Type},
     },
     common::JoinType,
-    prelude::{DataFrame, SessionContext, lit},
+    prelude::{DataFrame, SessionContext, coalesce, col, concat_ws, lit, nullif},
 };
 
 use crate::disjoint_set::DisjointSet;
@@ -19,9 +19,28 @@ pub async fn merge_with(
     tbl: DataFrame,
     union: DataFrame,
     ctx: &SessionContext,
+    criterion: &str,
 ) -> std::io::Result<DataFrame> {
-    let updates = make_merge_table(union, ctx).await?;
-    let tbl = tbl
+    let flip = criterion == "flip";
+
+    let mut updates = make_merge_table(union, ctx)
+        .await?
+        .with_column("new_criterion", lit(criterion))?;
+    if flip {
+        updates = updates.with_column("new_flip", lit(true))?;
+    }
+
+    if false {
+        for field in tbl.schema().fields().iter() {
+            log::info!("tbl field: {:?}", field);
+        }
+
+        for field in updates.schema().fields().iter() {
+            log::info!("update field: {:?}", field);
+        }
+    }
+
+    let mut tbl = tbl
         .join(
             updates,
             JoinType::Left,
@@ -29,10 +48,83 @@ pub async fn merge_with(
             &["orig_row_key"],
             None,
         )?
-        .drop_columns(&["orig_row_key"])?
-        .with_column_renamed("new_row_key", "row_key")?
-        .with_column_renamed("new_vix_set", "vix_set")?
-        .with_column_renamed("new_vix_count", "vix_count")?;
+        .with_column(
+            "row_key",
+            coalesce(vec![col("new_row_key"), col("row_key")]),
+        )?
+        .with_column(
+            "vix_set",
+            coalesce(vec![col("new_vix_set"), col("vix_set")]),
+        )?
+        .with_column(
+            "vix_count",
+            coalesce(vec![col("new_vix_count"), col("vix_count")]),
+        )?
+        .with_column(
+            "criteria",
+            concat_ws(
+                lit(","),
+                vec![nullif(col("criteria"), lit("")), col("new_criterion")],
+            ),
+        )?
+        .drop_columns(&[
+            "orig_row_key",
+            "new_row_key",
+            "new_vix_set",
+            "new_vix_count",
+            "new_criterion",
+        ])?;
+
+    // If we're flipping, then we need to swap over the chrom/chrom2 end/end2
+    //
+    if flip {
+        tbl = tbl
+            .with_column("flip", coalesce(vec![col("new_flip"), col("flip")]))?
+            .drop_columns(&["new_flip"])?;
+
+        let rhs = tbl.clone().filter(col("flip").eq(lit(true)))?.select(vec![
+            col("row_id").alias("flip_row_id"),
+            col("chrom").alias("flip_chrom"),
+            col("chrom_id").alias("flip_chrom_id"),
+            col("end").alias("flip_end"),
+            col("chrom2").alias("flip_chrom2"),
+            col("chrom2_id").alias("flip_chrom2_id"),
+            col("end2").alias("flip_end2"),
+        ])?;
+
+        tbl = tbl
+            .join(rhs, JoinType::Left, &["row_id"], &["flip_row_id"], None)?
+            .with_column("chrom", coalesce(vec![col("flip_chrom2"), col("chrom")]))?
+            .with_column(
+                "chrom_id",
+                coalesce(vec![col("flip_chrom2_id"), col("chrom_id")]),
+            )?
+            .with_column("start", coalesce(vec![col("flip_end2"), col("start")]))?
+            .with_column("end", coalesce(vec![col("flip_end2"), col("end")]))?
+            .with_column("chrom2", coalesce(vec![col("flip_chrom"), col("chrom2")]))?
+            .with_column(
+                "chrom2_id",
+                coalesce(vec![col("flip_chrom_id"), col("chrom2_id")]),
+            )?
+            .with_column("end2", coalesce(vec![col("flip_end"), col("end2")]))?
+            .drop_columns(&[
+                "flip_row_id",
+                "flip_chrom",
+                "flip_chrom_id",
+                "flip_end",
+                "flip_chrom2",
+                "flip_chrom2_id",
+                "flip_end2",
+            ])?;
+    }
+
+    if false {
+        tbl.clone()
+            .drop_columns(&["alt_seq", "seq_hash"])?
+            .sort_by(vec![col("chrom_id"), col("start"), col("row_id")])?
+            .show()
+            .await?;
+    }
 
     Ok(tbl)
 }
@@ -40,6 +132,11 @@ pub async fn merge_with(
 async fn make_merge_table(union: DataFrame, ctx: &SessionContext) -> std::io::Result<DataFrame> {
     let union =
         union.select_columns(&["lhs_row_key", "lhs_vix_set", "rhs_row_key", "rhs_vix_set"])?;
+
+    if false {
+        union.clone().show().await?;
+    }
+
     let union = union.collect().await?;
 
     let itr = union.iter().flat_map(|recs| MergeIterator::new(recs));
@@ -56,6 +153,8 @@ async fn make_merge_table(union: DataFrame, ctx: &SessionContext) -> std::io::Re
         }
     }
 
+    log::info!("updating merge information for {} entries", all.len());
+
     let mut final_sets: HashMap<u32, u32> = HashMap::new();
     for item in all.iter() {
         let row_key = *item.0;
@@ -71,17 +170,15 @@ async fn make_merge_table(union: DataFrame, ctx: &SessionContext) -> std::io::Re
     for (orig_row_key, _vix_set) in all.into_iter() {
         let new_row_key = sets.find(orig_row_key);
         let new_vix_set = *final_sets.get(&new_row_key).unwrap();
-        if orig_row_key != new_row_key {
-            orig_row_key_builder.append_value(orig_row_key);
-            new_row_key_builder.append_value(new_row_key);
-            new_vix_set_builder.append_value(new_vix_set);
-            new_vix_count_builder.append_value(new_vix_set.count_ones());
-        }
+        orig_row_key_builder.append_value(orig_row_key);
+        new_row_key_builder.append_value(new_row_key);
+        new_vix_set_builder.append_value(new_vix_set);
+        new_vix_count_builder.append_value(new_vix_set.count_ones());
     }
     let orig_row_key_array = orig_row_key_builder.finish();
     let new_row_key_array = new_row_key_builder.finish();
     let new_vix_set_array = new_vix_set_builder.finish();
-    let new_vix_count_array = new_vix_set_builder.finish();
+    let new_vix_count_array = new_vix_count_builder.finish();
 
     let schema = Arc::new(Schema::new(vec![
         Field::new("orig_row_key", DataType::UInt32, false),
@@ -99,7 +196,8 @@ async fn make_merge_table(union: DataFrame, ctx: &SessionContext) -> std::io::Re
             Arc::new(new_vix_count_array),
         ],
     )
-    .map_err(|e| Error::new(ErrorKind::Other, e))?;
+    .unwrap();
+    //.map_err(|e| Error::new(ErrorKind::Other, e))?;
 
     ctx.read_batch(recs)
         .map_err(|e| Error::new(ErrorKind::Other, e))
@@ -132,6 +230,9 @@ impl<'a> MergeIterator<'a> {
     }
 
     pub(crate) fn get_array<Type: 'static>(recs: &'a RecordBatch, name: &str) -> &'a Type {
+        if false {
+            log::info!("getting {}", name);
+        }
         recs.column_by_name(name)
             .unwrap()
             .as_any()

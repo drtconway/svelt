@@ -24,4 +24,5 @@ pub mod resolve;
 pub mod row_key;
 pub mod sequence;
 pub mod tables;
+pub mod union_find;
 pub mod vcf_reader;
