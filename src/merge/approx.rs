@@ -48,6 +48,7 @@ pub(super) fn approx_bnd_join(
             Some(
                 lit(true)
                     .and(col("lhs_row_id").lt(col("rhs_row_id")))
+                    .and(col("lhs_row_key").not_eq(col("rhs_row_key")))
                     .and(abs(col("lhs_start") - col("rhs_start")).lt(lit(options.position_window)))
                     .and(abs(col("lhs_end") - col("rhs_end")).lt(lit(options.position_window)))
                     .and(abs(col("lhs_end2") - col("rhs_end2")).lt(lit(options.end2_window)))
@@ -86,6 +87,7 @@ pub(super) async fn approx_near_join(
         (lhs.start - rhs.start).abs() <= w
             && (lhs.end - rhs.end).abs() <= w
             && lhs.row_id < rhs.row_id
+            && lhs.row_key != rhs.row_key
             && lhs_key.0 != rhs_key.0
             && std::cmp::min(lhs.length, rhs.length) as f64
                 / std::cmp::max(lhs.length, rhs.length) as f64

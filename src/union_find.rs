@@ -1,3 +1,8 @@
+/// A lock-free disjoint set (aka union-find) implementation based on
+/// "Wait-free Parallel Algorithms for the Union-Find Problem",
+///  Richard J. Anderson and Heather Woll
+/// https://dl.acm.org/doi/10.1145/103418.103458
+/// 
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
