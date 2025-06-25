@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io::{Error, ErrorKind},
     sync::Arc,
 };
@@ -141,35 +141,54 @@ async fn make_merge_table(union: DataFrame, ctx: &SessionContext) -> std::io::Re
 
     let itr = union.iter().flat_map(|recs| MergeIterator::new(recs));
 
-    let mut all = HashMap::new();
+    let mut updated_row_keys = HashSet::new();
+    let mut vix_set_index = HashMap::new();
     let mut sets = DisjointSet::new();
     for (lhs_row_key, lhs_vix_set, rhs_row_key, rhs_vix_set) in itr {
-        all.insert(lhs_row_key, lhs_vix_set);
-        all.insert(rhs_row_key, rhs_vix_set);
         let x = sets.find(lhs_row_key);
         let y = sets.find(rhs_row_key);
         if x != y {
-            sets.union(x, y);
+            // First, make sure we're not about to merge variants from the same VCF
+            //
+            let x_vix_set = if let Some(vix_set) = vix_set_index.get(&x) {
+                *vix_set
+            } else {
+                lhs_vix_set
+            };
+            let y_vix_set = if let Some(vix_set) = vix_set_index.get(&y) {
+                *vix_set
+            } else {
+                rhs_vix_set
+            };
+            if x_vix_set & y_vix_set != 0 {
+                continue;
+            }
+
+            updated_row_keys.insert(lhs_row_key);
+            updated_row_keys.insert(rhs_row_key);
+
+
+            let z = sets.union(x, y);
+            let vix_set = x_vix_set | y_vix_set;
+
+            vix_set_index.remove(&x);
+            vix_set_index.remove(&y);
+            vix_set_index.insert(z, vix_set);
         }
     }
 
-    log::info!("updating merge information for {} entries", all.len());
-
-    let mut final_sets: HashMap<u32, u32> = HashMap::new();
-    for item in all.iter() {
-        let row_key = *item.0;
-        let vix_set = *item.1;
-        let x = sets.find(row_key);
-        *final_sets.entry(x).or_default() |= vix_set;
-    }
+    log::info!(
+        "updating merge information for {} entries",
+        updated_row_keys.len()
+    );
 
     let mut orig_row_key_builder = PrimitiveBuilder::<UInt32Type>::new();
     let mut new_row_key_builder = PrimitiveBuilder::<UInt32Type>::new();
     let mut new_vix_set_builder = PrimitiveBuilder::<UInt32Type>::new();
     let mut new_vix_count_builder = PrimitiveBuilder::<UInt32Type>::new();
-    for (orig_row_key, _vix_set) in all.into_iter() {
+    for orig_row_key in updated_row_keys.into_iter() {
         let new_row_key = sets.find(orig_row_key);
-        let new_vix_set = *final_sets.get(&new_row_key).unwrap();
+        let new_vix_set = *vix_set_index.get(&new_row_key).unwrap();
         orig_row_key_builder.append_value(orig_row_key);
         new_row_key_builder.append_value(new_row_key);
         new_vix_set_builder.append_value(new_vix_set);
