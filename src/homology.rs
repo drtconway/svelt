@@ -29,14 +29,16 @@ use regex::Regex;
 
 use crate::{
     disjoint_set::DisjointSet,
-    distance::{distance, DistanceMetric},
+    distance::{DistanceMetric, distance},
     either::Either::{self, Left, Right},
-    errors::{as_io_error, SveltError},
+    errors::{SveltError, as_io_error},
     expressions::prefix_cols,
     kmers::Kmer,
     kmers_table::kmer_frequencies_to_table,
-    options::{make_session_context, CommonOptions, IndexingOptions, QueryOptions},
-    sequence::{fasta::FastaSequenceIterator, make_kmer_table, vcf::VcfSequenceIterator, SequenceIterator},
+    options::{CommonOptions, IndexingOptions, QueryOptions, make_session_context},
+    sequence::{
+        SequenceIterator, fasta::FastaSequenceIterator, make_kmer_table, vcf::VcfSequenceIterator,
+    },
 };
 
 pub async fn index_features(
@@ -374,8 +376,6 @@ pub async fn cluster_sequences(
 ) -> std::io::Result<()> {
     let ctx = make_session_context(common);
 
-    let chi_squared_cdf = datafusion_statrs::distribution::chi_squared::cdf();
-
     let reader = autodetect_open(sequences)?;
     let reader = BufReader::new(reader);
     let mut reader = fasta::io::reader::Builder::default().build_from_reader(reader)?;
@@ -509,11 +509,7 @@ pub async fn cluster_sequences(
             "chi_sq",
             lit(0.5) * (col("chi_sq") + col("lhs_missing") + col("rhs_missing")),
         )?
-        .drop_columns(&["lhs_missing", "rhs_missing"])?
-        .with_column(
-            "score",
-            chi_squared_cdf.call(vec![col("chi_sq"), cast(col("df"), DataType::Float64)]),
-        )?;
+        .drop_columns(&["lhs_missing", "rhs_missing"])?;
 
     let tbl = tbl.clone().sort(vec![col("score").sort(true, false)])?;
 

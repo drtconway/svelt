@@ -12,8 +12,6 @@ use crate::expressions::prefix_cols;
 /// The output is a dataframe with columns `query_name` `subject_name` `distance`.
 ///
 pub async fn chi_squared(query: DataFrame, subject: DataFrame) -> std::io::Result<DataFrame> {
-    let chi_squared_cdf = datafusion_statrs::distribution::chi_squared::cdf();
-
     let query = prefix_cols(query, "query")?;
     let subject = prefix_cols(subject, "subject")?;
 
@@ -150,10 +148,7 @@ pub async fn chi_squared(query: DataFrame, subject: DataFrame) -> std::io::Resul
             "subject_count_name",
             //"subject_count",
         ])?
-        .with_column(
-            "distance",
-            chi_squared_cdf.call(vec![col("chi_squared"), col("df")]),
-        )?;
+        .with_column("distance", col("chi_squared"))?;
 
     if true {
         tbl.clone()

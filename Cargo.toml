@@ -16,7 +16,6 @@ autocompress = "0.6.0"
 blake2 = "0.10.6"
 clap = { version = "4.5.39", features = ["derive"] }
 datafusion = { version = "48.0.0", features = ["parquet"] }
-datafusion-statrs = { git = "https://github.com/drtconway/datafusion-statrs.git", tag = "v0.2.0" }
 env_logger = "0.11.8"
 itertools = "0.14.0"
 log = "0.4.27"
