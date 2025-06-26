@@ -17,7 +17,7 @@ use datafusion::{
     config::{ParquetColumnOptions, TableParquetOptions},
     dataframe::DataFrameWriteOptions,
     functions_aggregate::{count::count, expr_fn::first_value, min_max::max, sum::sum},
-    prelude::{DataFrame, ParquetReadOptions, SessionContext, cast, col, lit, sqrt},
+    prelude::{DataFrame, ParquetReadOptions, SessionContext, col, lit, sqrt},
     scalar::ScalarValue,
 };
 use itertools::Itertools;
@@ -37,7 +37,7 @@ use crate::{
     kmers_table::kmer_frequencies_to_table,
     options::{CommonOptions, IndexingOptions, QueryOptions, make_session_context},
     sequence::{
-        SequenceIterator, fasta::FastaSequenceIterator, make_kmer_table, vcf::VcfSequenceIterator,
+        SequenceIterator, fasta::FastaSequenceIterator, vcf::VcfSequenceIterator,
     },
 };
 
