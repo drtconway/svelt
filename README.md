@@ -79,6 +79,14 @@ sequence involved to being highly homologous.
 
 - Currently the INFO column is naively populated from the left-most INFO. For
   standard INFO fields, we should consider merging.
+- It would be nice to compute AN, AC, and AF from the samples we merge and
+  include them in the INFO.
+- The ID column is currently populated from the left-most VCF with a variant.
+  IDs are required to be uniquely identifying within a VCF, but not between
+  VCFs, so it's possible (probable!) that we generate non-unique IDs in the
+  output. The proposed solution is to put the IDs from the original VCFs into
+  an INFO field, and generate a new ID for each row in the output in such a
+  way as to ensure it is unique.
 
 ### Additional Merging Rules
 
