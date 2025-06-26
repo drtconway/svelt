@@ -204,6 +204,7 @@ pub async fn merge_vcfs(
                 "length",
                 "start_offset",
                 "end_offset",
+                "end2_offset",
                 "total_offset",
                 "length_ratio",
                 "chrom2",
