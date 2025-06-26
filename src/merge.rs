@@ -23,12 +23,16 @@ use noodles::{
 
 use crate::{
     chroms::ChromSet,
-    construct::{add_svelt_header_fields, MergeBuilder},
+    construct::{MergeBuilder, add_svelt_header_fields},
     errors::as_io_error,
     merge::{
-        approx::{approx_bnd_join, approx_near_join}, exact::{full_exact_bnd, full_exact_indel_join, full_exact_locus_ins_join}, flip::approx_flipped_bnd_join, union::merge_with
+        approx::{approx_bnd_join, approx_near_join},
+        exact::{full_exact_bnd, full_exact_indel_join, full_exact_locus_ins_join},
+        flip::approx_flipped_bnd_join,
+        report::make_reporting_table,
+        union::merge_with,
     },
-    options::{make_session_context, CommonOptions, MergeOptions},
+    options::{CommonOptions, MergeOptions, make_session_context},
     record_seeker::RecordSeeker,
     row_key::RowKey,
     tables::load_vcf_core,
@@ -39,6 +43,7 @@ mod approx;
 mod classify;
 mod exact;
 mod flip;
+mod report;
 mod union;
 
 pub async fn merge_vcfs(
@@ -96,7 +101,7 @@ pub async fn merge_vcfs(
     }
     if true {
         log::info!("looking for almost exact matches on insertions");
-        let join = full_exact_locus_ins_join(results.clone(), n)?;
+        let join = full_exact_locus_ins_join(results.clone(), n, &options)?;
         results = merge_with(results, join, &ctx, "locus").await?;
     }
     if true {
@@ -118,7 +123,6 @@ pub async fn merge_vcfs(
         log::info!("looking for breakends we can flip");
         let join = approx_flipped_bnd_join(results.clone(), n, &options)?;
         results = merge_with(results, join, &ctx, "flip").await?;
-
     }
 
     let mut reference = None;
@@ -178,10 +182,12 @@ pub async fn merge_vcfs(
     }
 
     if let Some(table_out) = &options.write_merge_table {
+        let report = make_reporting_table(results.clone()).await?;
+
         let opts = DataFrameWriteOptions::default();
         let csv_opts = CsvOptions::default().with_delimiter(b'\t');
         let csv_opts = Some(csv_opts);
-        results
+        report
             .clone()
             .sort_by(vec![
                 col("chrom_id"),
@@ -196,6 +202,10 @@ pub async fn merge_vcfs(
                 "end",
                 "kind",
                 "length",
+                "start_offset",
+                "end_offset",
+                "total_offset",
+                "length_ratio",
                 "chrom2",
                 "end2",
                 "seq_hash",

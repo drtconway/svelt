@@ -1,9 +1,9 @@
 use datafusion::{
     common::JoinType,
-    prelude::{DataFrame, col, lit},
+    prelude::{DataFrame, abs, col, greatest, least, lit},
 };
 
-use crate::expressions::prefix_cols;
+use crate::{expressions::prefix_cols, options::MergeOptions};
 
 pub(super) fn full_exact_indel_join(orig: DataFrame, n: usize) -> std::io::Result<DataFrame> {
     let candidates = orig.clone().filter(
@@ -55,7 +55,11 @@ pub(super) fn full_exact_indel_join(orig: DataFrame, n: usize) -> std::io::Resul
     Ok(exact)
 }
 
-pub(super) fn full_exact_locus_ins_join(orig: DataFrame, n: usize) -> std::io::Result<DataFrame> {
+pub(super) fn full_exact_locus_ins_join(
+    orig: DataFrame,
+    n: usize,
+    options: &MergeOptions,
+) -> std::io::Result<DataFrame> {
     let candidates = orig.clone().filter(
         lit(true)
             .and(col("kind").eq(lit("INS")))
@@ -69,24 +73,17 @@ pub(super) fn full_exact_locus_ins_join(orig: DataFrame, n: usize) -> std::io::R
         .join(
             rhs,
             JoinType::Inner,
-            &[
-                "lhs_chrom_id",
-                "lhs_start",
-                "lhs_end",
-                "lhs_kind",
-                "lhs_length",
-            ],
-            &[
-                "rhs_chrom_id",
-                "rhs_start",
-                "rhs_end",
-                "rhs_kind",
-                "rhs_length",
-            ],
+            &["lhs_chrom_id", "lhs_start", "lhs_end", "lhs_kind"],
+            &["rhs_chrom_id", "rhs_start", "rhs_end", "rhs_kind"],
             Some(
                 lit(true)
                     .and(col("lhs_row_id").lt(col("rhs_row_id")))
                     .and((col("lhs_vix_set") & col("rhs_vix_set")).eq(lit(0)))
+                    .and(
+                        (least(vec![abs(col("lhs_length")), abs(col("rhs_length"))]) * lit(1.0)
+                            / greatest(vec![abs(col("lhs_length")), abs(col("rhs_length"))]))
+                        .gt_eq(lit(options.length_ratio)),
+                    ),
             ),
         )?
         .sort(vec![
@@ -120,7 +117,7 @@ pub(super) fn full_exact_bnd(orig: DataFrame, n: usize) -> std::io::Result<DataF
                 "lhs_end",
                 "lhs_kind",
                 "lhs_chrom2_id",
-                "lhs_end2"
+                "lhs_end2",
             ],
             &[
                 "rhs_chrom_id",
@@ -128,12 +125,12 @@ pub(super) fn full_exact_bnd(orig: DataFrame, n: usize) -> std::io::Result<DataF
                 "rhs_end",
                 "rhs_kind",
                 "rhs_chrom2_id",
-                "rhs_end2"
+                "rhs_end2",
             ],
             Some(
                 lit(true)
                     .and(col("lhs_row_id").lt(col("rhs_row_id")))
-                    .and((col("lhs_vix_set") & col("rhs_vix_set")).eq(lit(0)))
+                    .and((col("lhs_vix_set") & col("rhs_vix_set")).eq(lit(0))),
             ),
         )?
         .sort(vec![

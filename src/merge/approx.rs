@@ -89,8 +89,8 @@ pub(super) async fn approx_near_join(
             && lhs.row_id < rhs.row_id
             && lhs.row_key != rhs.row_key
             && lhs_key.0 != rhs_key.0
-            && std::cmp::min(lhs.length, rhs.length) as f64
-                / std::cmp::max(lhs.length, rhs.length) as f64
+            && std::cmp::min(lhs.length.abs(), rhs.length.abs()) as f64
+                / std::cmp::max(lhs.length.abs(), rhs.length.abs()) as f64
                 >= r
     };
 
@@ -347,7 +347,7 @@ impl<'a> MergeIterator<'a> {
         let chrom_id = Self::get_array::<UInt16Array>(recs, "chrom_id");
         let start = Self::get_array::<Int32Array>(recs, "start");
         let end = Self::get_array::<Int32Array>(recs, "end");
-        let length = Self::get_array::<Int32Array>(recs, "end");
+        let length = Self::get_array::<Int32Array>(recs, "length");
         let row_id = Self::get_array::<Int64Array>(recs, "row_id");
         let row_key = Self::get_array::<UInt32Array>(recs, "row_key");
         let vix_set = Self::get_array::<UInt32Array>(recs, "vix_set");
