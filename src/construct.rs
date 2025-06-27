@@ -61,6 +61,7 @@ impl MergeBuilder {
         &mut self,
         recs: Vec<Option<(Rc<Header>, Record)>>,
         vix_samples: &Vec<usize>,
+        vids: &Vec<String>,
         alts: &Vec<Option<String>>,
         flip: bool,
         criteria: &str,
@@ -70,6 +71,7 @@ impl MergeBuilder {
             &self.header,
             recs,
             &vix_samples,
+            vids,
             &alts,
             flip,
             &criteria,
@@ -117,6 +119,16 @@ pub fn add_svelt_header_fields(
     }
 
     infos.insert(
+        String::from("ORIGINAL_IDS"),
+        Builder::default()
+            .set_number(Number::Unknown)
+            .set_type(Type::String)
+            .set_description("The variant IDs from the original VCFs")
+            .build()
+            .map_err(|e| Error::new(ErrorKind::Other, e))?,
+    );
+
+    infos.insert(
         String::from("SVELT_CRITERIA"),
         Builder::default()
             .set_number(Number::Unknown)
@@ -158,6 +170,7 @@ pub fn construct_record(
     header: &Header,
     recs: Vec<Option<(Rc<Header>, Record)>>,
     vix_samples: &Vec<usize>,
+    vids: &Vec<String>,
     alts: &Vec<Option<String>>,
     flip: bool,
     criteria: &str,
@@ -166,9 +179,11 @@ pub fn construct_record(
     reference: &Option<Rc<Repository>>,
 ) -> std::io::Result<RecordBuf> {
     let _ = header;
+    let mut the_variant_id = String::new();
     let mut the_record = None;
     for vix in 0..recs.len() {
         if let Some(hnr) = &recs[vix] {
+            the_variant_id = vids[vix].clone();
             the_record = Some(hnr);
             break;
         }
@@ -183,10 +198,7 @@ pub fn construct_record(
         0
     };
 
-    let mut ids = Vec::new();
-    for id in the_record.ids().iter() {
-        ids.push(String::from(id));
-    }
+    let ids = vec![the_variant_id];
     let ids = Ids::from_iter(ids.into_iter());
 
     let (reference_bases, alternate_bases) = make_ref_and_alt(&the_record, options.force_alt_tags)?;
@@ -278,12 +290,28 @@ pub fn construct_record(
     filters.sort();
     let filters = Filters::from_iter(filters.into_iter());
 
+    // Gather up the original IDs
+    let mut original_ids = Vec::new();
+    for vix in 0..recs.len() {
+        if let Some(hnr) = &recs[vix] {
+            for id in hnr.1.ids().iter() {
+                original_ids.push(Some(String::from(id)));
+            }
+        }
+    }
+
     let mut info: Vec<(String, Option<InfoValue>)> = Vec::new();
     for item in the_record.info().iter(&the_header) {
         let (name, value) = item.unwrap();
         let name = String::from(name);
         let value = value.map(make_info_value);
         info.push((name, value));
+    }
+    if original_ids.len() > 0 {
+        info.push((
+            String::from(("ORIGINAL_IDS")),
+            Some(InfoValue::Array(InfoArray::String(original_ids))),
+        ));
     }
     if let (Some(chrom2), Some(end2)) = (&chrom2, &end2) {
         info = info

@@ -4,8 +4,6 @@ use datafusion::{
     prelude::{DataFrame, abs, case, col, greatest, least, lit, round},
 };
 
-use crate::expressions::ifelse;
-
 pub async fn make_reporting_table(tbl: DataFrame) -> std::io::Result<DataFrame> {
     let rhs = tbl
         .clone()

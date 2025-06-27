@@ -14,7 +14,9 @@ use datafusion::{
     common::JoinType,
     config::CsvOptions,
     dataframe::DataFrameWriteOptions,
-    prelude::{DataFrame, cast, col, concat, length, lit, nullif, to_hex},
+    prelude::{
+        DataFrame, cast, col, concat, concat_ws, encode, left, length, lit, nullif, sha256, to_hex,
+    },
 };
 use noodles::{
     fasta::{self, repository::adapters::IndexedReader},
@@ -133,7 +135,38 @@ pub async fn merge_vcfs(
         reference = Some(Rc::new(fasta::Repository::new(adapter)));
     }
 
-    results = results.with_column("seq_hash", to_hex(col("seq_hash")))?;
+    results = results
+        .with_column("seq_hash", to_hex(col("seq_hash")))?
+        .with_column(
+            "vid",
+            concat_ws(
+                lit("_"),
+                vec![
+                    col("kind"),
+                    col("chrom"),
+                    col("start"),
+                    col("end"),
+                    col("length"),
+                    col("chrom2"),
+                    col("end2"),
+                    col("seq_hash"),
+                ],
+            ),
+        )?
+        .with_column("vid_hash", encode(sha256(col("vid")), lit("hex")))?
+        .with_column(
+            "variant_id",
+            concat_ws(
+                lit("_"),
+                vec![
+                    col("chrom"),
+                    col("start"),
+                    col("kind"),
+                    left(col("vid_hash"), lit(8)),
+                ],
+            ),
+        )?
+        .drop_columns(&["vid", "vid_hash"])?;
 
     let mut annot = false;
     if let Some(features) = &options.annotate_insertions {
@@ -197,6 +230,7 @@ pub async fn merge_vcfs(
                 col("row_id"),
             ])?
             .select_columns(&[
+                "variant_id",
                 "chrom",
                 "start",
                 "end",
@@ -257,6 +291,7 @@ pub async fn merge_vcfs(
 
     let mut current_row_key = u32::MAX;
     let mut current_row: Vec<Option<u32>> = (0..n).into_iter().map(|_| None).collect();
+    let mut current_row_ids: Vec<String> = (0..n).into_iter().map(|_| String::new()).collect();
     let mut current_row_alts: Vec<Option<String>> = (0..n).into_iter().map(|_| None).collect();
     let mut current_row_flip = false;
     let mut current_row_criteria = String::new();
@@ -268,6 +303,7 @@ pub async fn merge_vcfs(
                 log::info!("field: {:?}", field);
             }
         }
+        let variant_ids = get_array::<GenericStringArray<i32>>(&recs, "variant_id");
         let row_ids = get_array::<Int64Array>(&recs, "row_id");
         let row_keys = get_array::<UInt32Array>(&recs, "row_key");
         let alt_seqs = get_array::<GenericStringArray<i32>>(&recs, "alt_seq");
@@ -308,6 +344,7 @@ pub async fn merge_vcfs(
                     builder.construct(
                         recs,
                         &vix_samples,
+                        &current_row_ids,
                         &current_row_alts,
                         current_row_flip,
                         &current_row_criteria,
@@ -317,6 +354,7 @@ pub async fn merge_vcfs(
 
                 current_row = (0..n).into_iter().map(|_| None).collect();
                 current_row_key = row_key;
+                current_row_ids = (0..n).into_iter().map(|_| String::new()).collect();
                 current_row_alts = (0..n).into_iter().map(|_| None).collect();
                 current_row_flip = false;
                 current_row_criteria = String::new();
@@ -325,6 +363,9 @@ pub async fn merge_vcfs(
 
             let (vix, rn) = RowKey::decode(row_id);
             current_row[vix as usize] = Some(rn);
+
+            let variant_id = String::from(variant_ids.value(i));
+            current_row_ids[vix as usize] = variant_id;
 
             let alt_seq = alt_seqs.value(i);
             if alt_seq.len() > 0 {
@@ -370,6 +411,7 @@ pub async fn merge_vcfs(
         builder.construct(
             recs,
             &vix_samples,
+            &current_row_ids,
             &current_row_alts,
             current_row_flip,
             &current_row_criteria,
