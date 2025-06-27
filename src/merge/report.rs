@@ -33,8 +33,8 @@ pub async fn produce_reporting_table(tbl: DataFrame, out: &str) -> std::io::Resu
         .clone()
         .sort_by(vec![
             col("chrom_id"),
-            col("start"),
-            col("end"),
+            col("primary_start"),
+            col("primary_end"),
             col("row_key"),
             col("row_id"),
         ])?
