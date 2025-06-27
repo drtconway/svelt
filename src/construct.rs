@@ -309,7 +309,7 @@ pub fn construct_record(
     }
     if original_ids.len() > 0 {
         info.push((
-            String::from(("ORIGINAL_IDS")),
+            String::from("ORIGINAL_IDS"),
             Some(InfoValue::Array(InfoArray::String(original_ids))),
         ));
     }
