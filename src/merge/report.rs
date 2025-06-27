@@ -1,41 +1,12 @@
 use datafusion::{
-    common::JoinType,
-    functions_aggregate::expr_fn::first_value,
+    config::CsvOptions,
+    dataframe::DataFrameWriteOptions,
     prelude::{DataFrame, abs, case, col, greatest, least, lit, round},
 };
 
-pub async fn make_reporting_table(tbl: DataFrame) -> std::io::Result<DataFrame> {
-    let rhs = tbl
+pub async fn produce_reporting_table(tbl: DataFrame, out: &str) -> std::io::Result<()> {
+    let report = tbl
         .clone()
-        .aggregate(
-            vec![col("row_key")],
-            vec![
-                first_value(col("row_id"), Some(vec![col("vix").sort(true, false)]))
-                    .alias("left_row_id"),
-            ],
-        )?
-        .drop_columns(&["row_key"])?;
-
-    let primary = tbl
-        .clone()
-        .join(rhs, JoinType::Inner, &["row_id"], &["left_row_id"], None)?
-        .select(vec![
-            col("row_key").alias("primary_row_key"),
-            col("start").alias("primary_start"),
-            col("end").alias("primary_end"),
-            col("end2").alias("primary_end2"),
-            abs(col("length")).alias("primary_length"),
-        ])?;
-
-    let tbl = tbl
-        .clone()
-        .join(
-            primary,
-            JoinType::Left,
-            &["row_key"],
-            &["primary_row_key"],
-            None,
-        )?
         .with_column("start_offset", abs(col("start") - col("primary_start")))?
         .with_column("end_offset", abs(col("end") - col("primary_end")))?
         .with_column("end2_offset", abs(col("end2") - col("primary_end2")))?
@@ -48,13 +19,51 @@ pub async fn make_reporting_table(tbl: DataFrame) -> std::io::Result<DataFrame> 
         )?
         .with_column(
             "length_ratio",
-            least(vec![abs(col("length")), col("primary_length")]) * lit(1.0)
-                / greatest(vec![abs(col("length")), col("primary_length")]),
+            least(vec![abs(col("length")), abs(col("primary_length"))]) * lit(1.0)
+                / greatest(vec![abs(col("length")), abs(col("primary_length"))]),
         )?
         .with_column(
             "length_ratio",
             round(vec![col("length_ratio") * lit(100.0)]) / lit(100.0),
         )?;
+    let opts = DataFrameWriteOptions::default();
+    let csv_opts = CsvOptions::default().with_delimiter(b'\t');
+    let csv_opts = Some(csv_opts);
+    report
+        .clone()
+        .sort_by(vec![
+            col("chrom_id"),
+            col("start"),
+            col("end"),
+            col("row_key"),
+            col("row_id"),
+        ])?
+        .select_columns(&[
+            "variant_id",
+            "chrom",
+            "start",
+            "end",
+            "kind",
+            "length",
+            "start_offset",
+            "end_offset",
+            "end2_offset",
+            "total_offset",
+            "length_ratio",
+            "chrom2",
+            "end2",
+            "seq_hash",
+            "vix",
+            "row_id",
+            "row_key",
+            "flip",
+            "vix_set",
+            "vix_count",
+            "criteria",
+            "alt_seq",
+        ])?
+        .write_csv(out, opts, csv_opts)
+        .await?;
 
-    Ok(tbl)
+    Ok(())
 }

@@ -12,8 +12,7 @@ use datafusion::{
         datatypes::DataType,
     },
     common::JoinType,
-    config::CsvOptions,
-    dataframe::DataFrameWriteOptions,
+    functions_aggregate::expr_fn::first_value,
     prelude::{
         DataFrame, cast, col, concat, concat_ws, encode, left, length, lit, nullif, sha256, to_hex,
     },
@@ -31,7 +30,7 @@ use crate::{
         approx::{approx_bnd_join, approx_near_join},
         exact::{full_exact_bnd, full_exact_indel_join, full_exact_locus_ins_join},
         flip::approx_flipped_bnd_join,
-        report::make_reporting_table,
+        report::produce_reporting_table,
         union::merge_with,
     },
     options::{CommonOptions, MergeOptions, make_session_context},
@@ -135,39 +134,6 @@ pub async fn merge_vcfs(
         reference = Some(Rc::new(fasta::Repository::new(adapter)));
     }
 
-    results = results
-        .with_column("seq_hash", to_hex(col("seq_hash")))?
-        .with_column(
-            "vid",
-            concat_ws(
-                lit("_"),
-                vec![
-                    col("kind"),
-                    col("chrom"),
-                    col("start"),
-                    col("end"),
-                    col("length"),
-                    col("chrom2"),
-                    col("end2"),
-                    col("seq_hash"),
-                ],
-            ),
-        )?
-        .with_column("vid_hash", encode(sha256(col("vid")), lit("hex")))?
-        .with_column(
-            "variant_id",
-            concat_ws(
-                lit("_"),
-                vec![
-                    col("chrom"),
-                    col("start"),
-                    col("kind"),
-                    left(col("vid_hash"), lit(8)),
-                ],
-            ),
-        )?
-        .drop_columns(&["vid", "vid_hash"])?;
-
     let mut annot = false;
     if let Some(features) = &options.annotate_insertions {
         let ins = results
@@ -214,55 +180,51 @@ pub async fn merge_vcfs(
         }
     }
 
-    if let Some(table_out) = &options.write_merge_table {
-        let report = make_reporting_table(results.clone()).await?;
+    results = results
+        .with_column("seq_hash", to_hex(col("seq_hash")))?
+        .with_column(
+            "vid",
+            concat_ws(
+                lit("_"),
+                vec![
+                    col("kind"),
+                    col("chrom"),
+                    col("start"),
+                    col("end"),
+                    col("length"),
+                    col("chrom2"),
+                    col("end2"),
+                    col("seq_hash"),
+                ],
+            ),
+        )?
+        .with_column("vid_hash", encode(sha256(col("vid")), lit("hex")))?
+        .with_column(
+            "variant_id",
+            concat_ws(
+                lit("_"),
+                vec![
+                    lit("SVELT"),
+                    col("kind"),
+                    left(col("vid_hash"), lit(8)),
+                ],
+            ),
+        )?
+        .drop_columns(&["vid", "vid_hash"])?;
 
-        let opts = DataFrameWriteOptions::default();
-        let csv_opts = CsvOptions::default().with_delimiter(b'\t');
-        let csv_opts = Some(csv_opts);
-        report
-            .clone()
-            .sort_by(vec![
-                col("chrom_id"),
-                col("start"),
-                col("end"),
-                col("row_key"),
-                col("row_id"),
-            ])?
-            .select_columns(&[
-                "variant_id",
-                "chrom",
-                "start",
-                "end",
-                "kind",
-                "length",
-                "start_offset",
-                "end_offset",
-                "end2_offset",
-                "total_offset",
-                "length_ratio",
-                "chrom2",
-                "end2",
-                "seq_hash",
-                "vix",
-                "row_id",
-                "row_key",
-                "flip",
-                "vix_set",
-                "vix_count",
-                "criteria",
-                "alt_seq",
-            ])?
-            .write_csv(table_out, opts, csv_opts)
-            .await?;
+    results = add_primary_cols(results)?;
+
+    if let Some(table_out) = &options.write_merge_table {
+        produce_reporting_table(results.clone(), &table_out).await?;
     }
 
     let table = results
         .sort_by(vec![
             col("chrom_id"),
-            col("start"),
-            col("end"),
+            col("primary_start"),
+            col("primary_end"),
             col("row_key"),
+            col("row_id"),
         ])?
         .collect()
         .await?;
@@ -446,4 +408,41 @@ fn get_array<'a, Type: 'static>(recs: &'a RecordBatch, name: &str) -> &'a Type {
         .as_any()
         .downcast_ref::<Type>()
         .unwrap()
+}
+
+fn add_primary_cols(tbl: DataFrame) -> std::io::Result<DataFrame> {
+    let rhs = tbl
+        .clone()
+        .aggregate(
+            vec![col("row_key")],
+            vec![
+                first_value(col("row_id"), Some(vec![col("vix").sort(true, false)]))
+                    .alias("left_row_id"),
+            ],
+        )?
+        .drop_columns(&["row_key"])?;
+
+    let primary = tbl
+        .clone()
+        .join(rhs, JoinType::Inner, &["row_id"], &["left_row_id"], None)?
+        .select(vec![
+            col("row_key").alias("primary_row_key"),
+            col("start").alias("primary_start"),
+            col("end").alias("primary_end"),
+            col("end2").alias("primary_end2"),
+            col("length").alias("primary_length"),
+        ])?;
+
+    let tbl = tbl
+        .clone()
+        .join(
+            primary,
+            JoinType::Left,
+            &["row_key"],
+            &["primary_row_key"],
+            None,
+        )?
+        .drop_columns(&["primary_row_key"])?;
+
+    Ok(tbl)
 }
