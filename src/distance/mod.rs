@@ -2,6 +2,7 @@ use datafusion::prelude::DataFrame;
 
 pub mod chi_squared;
 pub mod cosine;
+pub mod needleman_wunsch;
 
 pub enum DistanceMetric {
     ChiSquared,
