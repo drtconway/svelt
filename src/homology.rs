@@ -17,7 +17,7 @@ use datafusion::{
     config::{ParquetColumnOptions, TableParquetOptions},
     dataframe::DataFrameWriteOptions,
     functions_aggregate::{count::count, expr_fn::first_value, min_max::max, sum::sum},
-    prelude::{DataFrame, ParquetReadOptions, SessionContext, col, lit, sqrt},
+    prelude::{DataFrame, SessionContext, col, lit, sqrt},
     scalar::ScalarValue,
 };
 use itertools::Itertools;
@@ -28,17 +28,9 @@ use noodles::fasta::{
 use regex::Regex;
 
 use crate::{
-    disjoint_set::DisjointSet,
-    distance::{DistanceMetric, distance},
-    either::Either::{self, Left, Right},
-    errors::{SveltError, as_io_error},
-    expressions::prefix_cols,
-    kmers::Kmer,
-    kmers_table::kmer_frequencies_to_table,
-    options::{CommonOptions, IndexingOptions, QueryOptions, make_session_context},
-    sequence::{
-        SequenceIterator, fasta::FastaSequenceIterator, vcf::VcfSequenceIterator,
-    },
+    disjoint_set::DisjointSet, either::Either::{self, Left, Right}, expressions::prefix_cols, features::FeatureIndex, kmers::Kmer, kmers_table::kmer_frequencies_to_table, options::{make_session_context, CommonOptions, IndexingOptions, QueryOptions}, sequence::{
+        fasta::FastaSequenceIterator, vcf::VcfSequenceIterator, SequenceIterator
+    }
 };
 
 pub async fn index_features(
@@ -642,84 +634,6 @@ pub async fn cluster_sequences(
     }
 
     Ok(())
-}
-
-pub struct FeatureIndex {
-    k: usize,
-    kmers: DataFrame,
-    names: DataFrame,
-}
-
-impl FeatureIndex {
-    pub async fn new(features: &str, ctx: &SessionContext) -> std::io::Result<FeatureIndex> {
-        log::info!("loading index '{}'", features);
-        let opts = ParquetReadOptions::default().skip_metadata(false);
-        let kmers = ctx
-            .read_parquet(&format!("{}-kidx.parquet", features), opts.clone())
-            .await?;
-        let meta = kmers.schema().metadata();
-        let k: usize = if let Some(k_str) = meta.get("k") {
-            if let Ok(k) = k_str.parse() {
-                k
-            } else {
-                return Err(as_io_error(SveltError::MissingK(String::from(features))));
-            }
-        } else {
-            return Err(as_io_error(SveltError::MissingK(String::from(features))));
-        };
-
-        let names = ctx
-            .read_parquet(&format!("{}-nidx.parquet", features), opts)
-            .await?;
-        let names = names
-            .with_column_renamed("name", "idx_name")?
-            .with_column_renamed("nix", "idx_nix")?;
-
-        log::info!("loading index done.");
-
-        Ok(FeatureIndex { k, kmers, names })
-    }
-
-    pub fn k(&self) -> usize {
-        self.k
-    }
-
-    pub async fn rank(&self, query: DataFrame) -> std::io::Result<DataFrame> {
-        let query = query.with_column("name", lit("query"))?;
-
-        let subject = self.kmers.clone().with_column_renamed("nix", "name")?;
-
-        let res = distance(query, subject, DistanceMetric::Cosine).await?;
-        let res = res
-            .join(
-                self.names.clone(),
-                JoinType::Left,
-                &["subject_name"],
-                &["idx_nix"],
-                None,
-            )?
-            .drop_columns(&["subject_name", "idx_nix"])?
-            .with_column_renamed("idx_name", "subject_name")?;
-
-        Ok(res)
-    }
-
-    pub async fn rank_many(&self, queries: DataFrame) -> std::io::Result<DataFrame> {
-        let subject = self.kmers.clone().with_column_renamed("nix", "name")?;
-
-        let res = distance(queries, subject, DistanceMetric::Cosine).await?;
-        let res = res
-            .join(
-                self.names.clone(),
-                JoinType::Left,
-                &["subject_name"],
-                &["idx_nix"],
-                None,
-            )?
-            .drop_columns(&["subject_name", "idx_nix"])?
-            .with_column_renamed("idx_name", "subject_name")?;
-        Ok(res)
-    }
 }
 
 struct MergeIterator<'a> {

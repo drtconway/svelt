@@ -1,4 +1,4 @@
-use crate::homology::FeatureIndex;
+use crate::features::FeatureIndex;
 use crate::kmers_table::kmers_table;
 use datafusion::{
     arrow::array::{Array as _, GenericStringArray, RecordBatch},
@@ -12,7 +12,6 @@ pub(crate) async fn find_classifications(
     features: &str,
     ctx: &SessionContext,
 ) -> std::io::Result<Option<DataFrame>> {
-
     let n: usize = batch.iter().map(|recs| recs.num_rows()).sum();
     log::info!("number of sequences to classify: {}", n);
     if n == 0 {

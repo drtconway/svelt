@@ -6,6 +6,7 @@ pub mod distance;
 pub mod either;
 pub mod errors;
 pub mod expressions;
+pub mod features;
 pub mod heap;
 pub mod homology;
 pub mod inputs;
