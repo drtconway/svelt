@@ -80,15 +80,15 @@ pub struct IndexingOptions {
     pub k: usize,
 
     /// Regular expression for parsing names
-     #[arg(long, required = false, default_value = "^(?<name>[[:word:]]+)[[:blank:]]+(?<class>[[:word:]]+)")]
+     #[arg(long, required = false, default_value = "(?<class>[^/]+/[^/]+)/(?<name>[^(]+).*")]
     pub pattern: String,
 
-    /// Reference to get the name (number for group number, or name for named group)
-    #[arg(long, required = false, default_value = "name")]
+    /// Replacement to get the name (use $ to reference name/number groups)
+    #[arg(long, required = false, default_value = "$name")]
     pub name: String,
 
-    /// Reference to get the class (number for group number, or name for named group)
-    #[arg(long, required = false, default_value = "class")]
+    /// Replacement to get the class (use $ to reference name/number groups)
+    #[arg(long, required = false, default_value = "$class")]
     pub class: String,
 }
 

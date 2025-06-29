@@ -2,9 +2,10 @@ use std::rc::Rc;
 
 use clap::{Parser, Subcommand};
 use svelt::{
-    homology::{cluster_sequences, find_similar, index_features},
+    features::FeatureIndex,
+    homology::{cluster_sequences, find_similar},
     merge::merge_vcfs,
-    options::{CommonOptions, IndexingOptions, MergeOptions, QueryOptions},
+    options::{CommonOptions, IndexingOptions, MergeOptions, QueryOptions, make_session_context},
 };
 
 /// Structuaral Variant (SV) VCF merging
@@ -98,7 +99,9 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    env_logger::builder().filter_level(log::LevelFilter::Info).init();
+    env_logger::builder()
+        .filter_level(log::LevelFilter::Info)
+        .init();
 
     let cli = Cli::parse();
 
@@ -110,13 +113,7 @@ async fn main() -> std::io::Result<()> {
             common,
         } => {
             let options = Rc::new(options);
-            merge_vcfs(
-                &out,
-                &vcf,
-                options,
-                &common,
-            )
-            .await?;
+            merge_vcfs(&out, &vcf, options, &common).await?;
         }
         Commands::IndexFeatures {
             out,
@@ -124,7 +121,10 @@ async fn main() -> std::io::Result<()> {
             options,
             common,
         } => {
-            index_features(&features, &out, &options, &common).await?;
+            let ctx = make_session_context(&common);
+
+            let idx = FeatureIndex::build(&features, &options, &ctx).await?;
+            idx.save(&out).await?;
         }
         Commands::FindSimilar {
             features,
@@ -142,7 +142,7 @@ async fn main() -> std::io::Result<()> {
             common,
         } => {
             cluster_sequences(&sequences, &out, k, cutoff, &common).await?;
-        },
+        }
     }
     Ok(())
 }

@@ -18,12 +18,13 @@ pub(crate) async fn find_classifications(
         return Ok(None);
     }
 
-    let idx = FeatureIndex::new(features, &ctx).await?;
+    let idx = FeatureIndex::load(features, &ctx).await?;
 
     let k = idx.k();
 
     log::info!("classifying insertion sequences with '{}'", features);
     let now = Instant::now();
+    let mut last = Instant::now();
 
     let itr = batch.iter().flat_map(|recs| MergeIterator::new(recs));
 
@@ -31,9 +32,19 @@ pub(crate) async fn find_classifications(
     let mut total_ins_sequences: usize = 0;
 
     let mut curr: Option<DataFrame> = None;
-    let mut seq_count = 0;
+    let mut seq_count: usize = 0;
     let mut curr_count: usize = 0;
     for rec in itr {
+        if seq_count & 0xFF == 0xFF {
+            if last.elapsed().as_secs_f64() > 10.0 {
+                log::info!(
+                    "classified {} sequences in {}s.",
+                    total_ins_sequences,
+                    now.elapsed().as_secs_f32()
+                );
+                last = Instant::now();
+            }
+        }
         total_ins_sequences += 1;
         seq_count += 1;
         let (name, sequence) = rec;

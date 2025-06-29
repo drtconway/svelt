@@ -1,21 +1,15 @@
 use std::{
     collections::HashMap,
-    io::{BufReader, BufWriter, Error, ErrorKind},
-    sync::Arc,
+    io::{BufReader, BufWriter},
 };
 
 use autocompress::{CompressionLevel, autodetect_create, autodetect_open};
 use datafusion::{
     arrow::{
-        array::{
-            Array, Float64Array, GenericStringArray, PrimitiveArray, PrimitiveBuilder, RecordBatch,
-            StringDictionaryBuilder,
-        },
-        datatypes::{DataType, Field, Float64Type, Schema, UInt32Type, UInt64Type},
+        array::{Array, Float64Array, GenericStringArray, PrimitiveArray, RecordBatch},
+        datatypes::Float64Type,
     },
     common::JoinType,
-    config::{ParquetColumnOptions, TableParquetOptions},
-    dataframe::DataFrameWriteOptions,
     functions_aggregate::{count::count, expr_fn::first_value, min_max::max, sum::sum},
     prelude::{DataFrame, SessionContext, col, lit, sqrt},
     scalar::ScalarValue,
@@ -25,175 +19,16 @@ use noodles::fasta::{
     self,
     record::{Definition, Sequence},
 };
-use regex::Regex;
 
 use crate::{
-    disjoint_set::DisjointSet, either::Either::{self, Left, Right}, expressions::prefix_cols, features::FeatureIndex, kmers::Kmer, kmers_table::kmer_frequencies_to_table, options::{make_session_context, CommonOptions, IndexingOptions, QueryOptions}, sequence::{
-        fasta::FastaSequenceIterator, vcf::VcfSequenceIterator, SequenceIterator
-    }
+    disjoint_set::DisjointSet,
+    expressions::prefix_cols,
+    features::FeatureIndex,
+    kmers::Kmer,
+    kmers_table::kmer_frequencies_to_table,
+    options::{CommonOptions, QueryOptions, make_session_context},
+    sequence::{SequenceIterator, fasta::FastaSequenceIterator, vcf::VcfSequenceIterator},
 };
-
-pub async fn index_features(
-    features_name: &str,
-    out: &str,
-    options: &IndexingOptions,
-    common: &CommonOptions,
-) -> std::io::Result<()> {
-    let ctx = make_session_context(common);
-
-    //let xx = FastaSequenceIterator::new(features_name)?;
-    //let yy = make_kmer_table(options.k, xx, &ctx).await?;
-
-    let reader = autodetect_open(features_name)?;
-    let reader = BufReader::new(reader);
-    let mut reader = fasta::io::reader::Builder::default().build_from_reader(reader)?;
-
-    let mut names = Vec::new();
-    let mut kmer_index: HashMap<u64, Vec<(usize, usize)>> = HashMap::new();
-
-    for rec in reader.records() {
-        let rec = rec?;
-        let name = rec.definition().to_string().split_off(1);
-
-        let n = names.len();
-        names.push(name.clone());
-
-        let mut fwd = Vec::new();
-        Kmer::with_many_both(options.k, rec.sequence(), |x, _y| {
-            fwd.push(x.0);
-        });
-        fwd.sort();
-        for (x, c) in fwd
-            .into_iter()
-            .chunk_by(|x| *x)
-            .into_iter()
-            .map(|(x, xs)| (x, xs.count()))
-        {
-            kmer_index.entry(x).or_default().push((n, c));
-        }
-    }
-
-    let rx = Regex::new(&options.pattern).map_err(|e| Error::new(ErrorKind::Other, e))?;
-    let nm: Either<usize, String> = if let Ok(x) = options.name.parse() {
-        Left(x)
-    } else {
-        Right(options.name.clone())
-    };
-    let cls: Either<usize, String> = if let Ok(x) = options.class.parse() {
-        Left(x)
-    } else {
-        Right(options.class.clone())
-    };
-
-    // Write out the names
-
-    let mut name_builder = StringDictionaryBuilder::<UInt32Type>::new();
-    let mut class_builder = StringDictionaryBuilder::<UInt32Type>::new();
-    let mut nix_builder = PrimitiveBuilder::<UInt32Type>::new();
-
-    for (nix, orig) in names.into_iter().enumerate() {
-        if let Some(m) = rx.captures(&orig) {
-            let name = match &nm {
-                Left(n) => String::from(&m[*n]),
-                Right(v) => String::from(&m[v as &str]),
-            };
-            let class = match &cls {
-                Left(n) => String::from(&m[*n]),
-                Right(v) => String::from(&m[v as &str]),
-            };
-            name_builder.append_value(name);
-            class_builder.append_value(class);
-            nix_builder.append_value(nix as u32);
-        } else {
-            log::warn!("Couldn't parse feature sequence name: '{}'", orig);
-            name_builder.append_value(orig);
-            class_builder.append_value(String::from("<unknown>"));
-            nix_builder.append_value(nix as u32);
-        }
-    }
-
-    let name_array = name_builder.finish();
-    let class_array = class_builder.finish();
-    let nix_array = nix_builder.finish();
-
-    let name_schema = Arc::new(Schema::new(vec![
-        Field::new_dictionary("name", DataType::UInt32, DataType::Utf8, false),
-        Field::new_dictionary("class", DataType::UInt32, DataType::Utf8, false),
-        Field::new("nix", DataType::UInt32, false),
-    ]));
-
-    let recs = RecordBatch::try_new(
-        name_schema,
-        vec![
-            Arc::new(name_array),
-            Arc::new(class_array),
-            Arc::new(nix_array),
-        ],
-    )
-    .map_err(|e| Error::new(ErrorKind::Other, e))?;
-
-    let df = ctx.read_batch(recs)?;
-
-    let opts = DataFrameWriteOptions::default();
-
-    df.sort_by(vec![col("class"), col("name")])?
-        .write_parquet(&format!("{}-nidx.parquet", out), opts, None)
-        .await?;
-
-    // Write out the kmer index
-
-    let mut kmer_builder = PrimitiveBuilder::<UInt64Type>::new();
-    let mut nix_builder = PrimitiveBuilder::<UInt32Type>::new();
-    let mut count_builder = PrimitiveBuilder::<UInt32Type>::new();
-
-    for (x, postings) in kmer_index.into_iter() {
-        for (n, c) in postings.into_iter() {
-            kmer_builder.append_value(x);
-            nix_builder.append_value(n as u32);
-            count_builder.append_value(c as u32);
-        }
-    }
-
-    let kmer_array = kmer_builder.finish();
-    let nix_array = nix_builder.finish();
-    let count_array = count_builder.finish();
-
-    let kmer_schema = Arc::new(Schema::new(vec![
-        Field::new("kmer", DataType::UInt64, false),
-        Field::new("nix", DataType::UInt32, false),
-        Field::new("count", DataType::UInt32, false),
-    ]));
-
-    let recs = RecordBatch::try_new(
-        kmer_schema,
-        vec![
-            Arc::new(kmer_array),
-            Arc::new(nix_array),
-            Arc::new(count_array),
-        ],
-    )
-    .map_err(|e| Error::new(ErrorKind::Other, e))?;
-
-    let df = ctx.read_batch(recs)?;
-
-    let opts = DataFrameWriteOptions::default();
-
-    let mut kidx_opts = TableParquetOptions::default();
-    let mut kmer_opts = ParquetColumnOptions::default();
-    kmer_opts.compression = Some(String::from("zstd(19)"));
-    kidx_opts
-        .column_specific_options
-        .insert(String::from("kmer"), kmer_opts);
-    kidx_opts
-        .key_value_metadata
-        .insert(String::from("k"), Some(options.k.to_string()));
-
-    df.sort_by(vec![col("kmer"), col("nix")])?
-        .write_parquet(&format!("{}-kidx.parquet", out), opts, Some(kidx_opts))
-        .await?;
-
-    Ok(())
-}
 
 pub async fn find_similar(
     features: &str,
@@ -207,7 +42,7 @@ pub async fn find_similar(
         return find_similar_single(features, query, k, common).await;
     }
 
-    let idx = FeatureIndex::new(features, &ctx).await?;
+    let idx = FeatureIndex::load(features, &ctx).await?;
 
     if let Some(query_file) = &query.query_file {
         let itr = FastaSequenceIterator::new(&query_file)?;
@@ -322,7 +157,7 @@ async fn find_similar_single(
 ) -> std::io::Result<()> {
     let ctx = make_session_context(common);
 
-    let idx = FeatureIndex::new(features, &ctx).await?;
+    let idx = FeatureIndex::load(features, &ctx).await?;
 
     let mut fwd = Vec::new();
     let mut rev = Vec::new();

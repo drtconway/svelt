@@ -134,6 +134,9 @@ pub async fn merge_vcfs(
         reference = Some(Rc::new(fasta::Repository::new(adapter)));
     }
 
+    // Annotation needs the seq_hash as a string.
+    results = results.with_column("seq_hash", to_hex(col("seq_hash")))?;
+
     let mut annot = false;
     if let Some(features) = &options.annotate_insertions {
         let ins = results
@@ -181,7 +184,6 @@ pub async fn merge_vcfs(
     }
 
     results = results
-        .with_column("seq_hash", to_hex(col("seq_hash")))?
         .with_column(
             "vid",
             concat_ws(
@@ -203,11 +205,7 @@ pub async fn merge_vcfs(
             "variant_id",
             concat_ws(
                 lit("_"),
-                vec![
-                    lit("SVELT"),
-                    col("kind"),
-                    left(col("vid_hash"), lit(8)),
-                ],
+                vec![lit("SVELT"), col("kind"), left(col("vid_hash"), lit(8))],
             ),
         )?
         .drop_columns(&["vid", "vid_hash"])?;

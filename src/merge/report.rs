@@ -26,6 +26,26 @@ pub async fn produce_reporting_table(tbl: DataFrame, out: &str) -> std::io::Resu
             "length_ratio",
             round(vec![col("length_ratio") * lit(100.0)]) / lit(100.0),
         )?;
+
+    // Move alt_seq to the back to make the table more readable
+    let columns = report.schema().columns();
+    let mut columns: Vec<&str> = columns
+        .iter()
+        .map(|c| c.name())
+        .filter(|nm| {
+            *nm != "primary_start"
+                && *nm != "primary_end"
+                && *nm != "primary_end2"
+                && *nm != "primary_length"
+        })
+        .collect();
+    if let Some((i, _)) = columns.iter().enumerate().find(|(_, nm)| **nm == "alt_seq") {
+        let j = columns.len() - 1;
+        if i != j {
+            columns.swap(i, j);
+        }
+    }
+
     let opts = DataFrameWriteOptions::default();
     let csv_opts = CsvOptions::default().with_delimiter(b'\t');
     let csv_opts = Some(csv_opts);
@@ -38,30 +58,7 @@ pub async fn produce_reporting_table(tbl: DataFrame, out: &str) -> std::io::Resu
             col("row_key"),
             col("row_id"),
         ])?
-        .select_columns(&[
-            "variant_id",
-            "chrom",
-            "start",
-            "end",
-            "kind",
-            "length",
-            "start_offset",
-            "end_offset",
-            "end2_offset",
-            "total_offset",
-            "length_ratio",
-            "chrom2",
-            "end2",
-            "seq_hash",
-            "vix",
-            "row_id",
-            "row_key",
-            "flip",
-            "vix_set",
-            "vix_count",
-            "criteria",
-            "alt_seq",
-        ])?
+        .select_columns(&columns)?
         .write_csv(out, opts, csv_opts)
         .await?;
 
