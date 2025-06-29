@@ -35,12 +35,13 @@ pub(crate) async fn find_classifications(
     let mut seq_count: usize = 0;
     let mut curr_count: usize = 0;
     for rec in itr {
-        if seq_count & 0xFF == 0xFF {
+        if total_ins_sequences & 0xF == 0xF {
             if last.elapsed().as_secs_f64() > 10.0 {
                 log::info!(
-                    "classified {} sequences in {}s.",
+                    "classified {} sequences in {}s ({} seq/sec).",
                     total_ins_sequences,
-                    now.elapsed().as_secs_f32()
+                    now.elapsed().as_secs_f32(),
+                    total_ins_sequences as f32 / now.elapsed().as_secs_f32(),
                 );
                 last = Instant::now();
             }
