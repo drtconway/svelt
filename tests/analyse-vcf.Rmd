@@ -1,0 +1,47 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r prepare, echo=F}
+library(VariantAnnotation)
+library(data.table)
+library(ggplot2)
+```
+
+```{r}
+vcf <- readVcf("D:/Development/x.vcf")
+```
+
+```{r marshal, echo=F}
+ gt <- as.data.table(geno(vcf)$GT)
+gt[gt == "."] <- NA
+gt[, id := rownames(geno(vcf)$GT)]
+gt[, svtype := info(vcf)$SVTYPE]
+samples <- colnames(geno(vcf)$GT)
+gt.long = melt(gt, id.vars = c("id", "svtype"), measure.vars = samples)
+gt.sample.counts <- gt.long[, .(n = sum(!is.na(value))), by=.(id, svtype)]
+bad.ids <- gt.sample.counts[n > 3]$id
+gt.summary <- gt.sample.counts[, .(count = length(id)), by=.(svtype, n)][order(svtype, n)]
+```
+
+```{r overmerged, echo=F}
+knitr::kable(gt.sample.counts[n > 3])
+```
+
+```{r summary, echo=F}
+knitr::kable(gt.summary[n <= 3])
+```
+
+```{r sets, echo=F}
+sets <- gt.long[!is.na(value) & !(id %in% bad.ids), .(set = paste(variable[order(variable)], collapse = ",")), by=.(id, svtype)][, .(n = length(id)), by=.(svtype, set)]
+sets.table <- dcast(sets, set ~ svtype, value.var = "n", fill = 0)
+```
+```{r print.sets, echo=F}
+knitr::kable(sets.table)
+```
+
+```{r duplicates, echo=F}
+bad.rows <- gt.long[!is.na(value), .(bad = (length(variable) != length(unique(variable)))), by=.(svtype, id)][bad == TRUE]
+knitr::kable(bad.rows)
+```
