@@ -13,15 +13,13 @@ use datafusion::{
     config::{ParquetColumnOptions, TableParquetOptions},
     dataframe::DataFrameWriteOptions,
     functions_aggregate::count::count,
-    prelude::{
-        DataFrame, ParquetReadOptions, SessionContext, col, lit, regexp_replace,
-    },
+    prelude::{DataFrame, ParquetReadOptions, SessionContext, col, lit, regexp_replace},
 };
 use noodles::fasta;
 
 use crate::{
     distance::{DistanceMetric, distance, needleman_wunsch::align},
-    errors::{SveltError, as_io_error},
+    errors::{SveltError, as_io_error, wrap_file_error},
     kmers::kmerize::kmers_fwd,
     options::IndexingOptions,
 };
@@ -39,7 +37,7 @@ impl FeatureIndex {
         options: &IndexingOptions,
         ctx: &SessionContext,
     ) -> std::io::Result<FeatureIndex> {
-        let reader = autodetect_open(source)?;
+        let reader = autodetect_open(source).map_err(|e| wrap_file_error(e, source))?;
         let reader = BufReader::new(reader);
         let mut reader = fasta::io::reader::Builder::default().build_from_reader(reader)?;
 

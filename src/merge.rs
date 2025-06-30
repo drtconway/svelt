@@ -5,13 +5,16 @@ use std::{
 
 use datafusion::{
     arrow::{
-        array::{Array, BooleanArray, GenericStringArray, Int64Array, RecordBatch, StringViewArray, UInt32Array},
+        array::{
+            Array, BooleanArray, GenericStringArray, Int64Array, RecordBatch, StringViewArray,
+            UInt32Array,
+        },
         datatypes::DataType,
     },
     common::JoinType,
     functions_aggregate::expr_fn::first_value,
     prelude::{
-        cast, col, concat, concat_ws, encode, left, length, lit, nullif, sha256, to_hex, DataFrame
+        DataFrame, cast, col, concat, concat_ws, encode, left, length, lit, nullif, sha256, to_hex,
     },
 };
 use noodles::{
@@ -20,12 +23,21 @@ use noodles::{
 };
 
 use crate::{
-    breakends::unpaired_breakend_check, chroms::ChromSet, construct::{add_svelt_header_fields, MergeBuilder}, errors::as_io_error, merge::{
+    breakends::unpaired_breakend_check,
+    chroms::ChromSet,
+    construct::{MergeBuilder, add_svelt_header_fields},
+    errors::{as_io_error, wrap_file_error},
+    merge::{
         approx::{approx_bnd_here_there_join, approx_bnd_there_here_join, approx_near_join},
         exact::{full_exact_bnd, full_exact_indel_join, full_exact_locus_ins_join},
         report::produce_reporting_table,
         union::merge_with,
-    }, options::{make_session_context, CommonOptions, MergeOptions}, record_seeker::RecordSeeker, row_key::RowKey, tables::load_vcf_core, vcf_reader::VcfReader
+    },
+    options::{CommonOptions, MergeOptions, make_session_context},
+    record_seeker::RecordSeeker,
+    row_key::RowKey,
+    tables::load_vcf_core,
+    vcf_reader::VcfReader,
 };
 
 mod approx;
@@ -372,7 +384,7 @@ pub async fn merge_vcfs(
 }
 
 fn load_chroms(path: &str) -> std::io::Result<ChromSet> {
-    let reader = autocompress::autodetect_open(path)?;
+    let reader = autocompress::autodetect_open(path).map_err(|e| wrap_file_error(e, path))?;
     let mut reader: vcf::io::Reader<Box<dyn BufRead>> =
         vcf::io::reader::Builder::default().build_from_reader(reader)?;
     let header: Header = reader.read_header()?;

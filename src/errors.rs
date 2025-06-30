@@ -1,6 +1,7 @@
 use std::{
+    error::Error,
     fmt::Display,
-    io::{Error, ErrorKind},
+    io::{Error as IoError, ErrorKind},
 };
 
 #[derive(Debug)]
@@ -12,6 +13,7 @@ pub enum SveltError {
     Contigs(usize, usize),
     ContigMissing(String, usize),
     ContigOrder(String, usize, usize),
+    FileError(String, Box<dyn Error + Send + Sync + 'static>),
     MissingAlt(String, usize),
     MissingChr2(String, usize),
     MissingInfo(String, usize, String),
@@ -60,6 +62,14 @@ impl Display for SveltError {
                     chrom, exp, got
                 )
             }
+            SveltError::FileError(filename, error) => {
+                write!(
+                    f,
+                    "With file '{}' the following error occurred: {}",
+                    filename,
+                    error.as_ref().to_string()
+                )
+            }
             SveltError::MissingAlt(chrom, pos) => {
                 write!(f, "No ALT present at {}:{}", chrom, pos)
             }
@@ -99,5 +109,12 @@ impl Display for SveltError {
 impl std::error::Error for SveltError {}
 
 pub fn as_io_error(error: SveltError) -> std::io::Error {
-    Error::new(ErrorKind::Other, error)
+    IoError::new(ErrorKind::Other, error)
+}
+
+pub fn wrap_file_error<E: std::error::Error + Send + Sync + 'static>(
+    e: E,
+    filename: &str,
+) -> std::io::Error {
+    as_io_error(SveltError::FileError(String::from(filename), Box::new(e)))
 }
