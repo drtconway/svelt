@@ -63,7 +63,6 @@ impl MergeBuilder {
         vix_samples: &Vec<usize>,
         vids: &Vec<String>,
         alts: &Vec<Option<String>>,
-        flip: bool,
         criteria: &str,
         feature: &str,
     ) -> std::io::Result<()> {
@@ -73,7 +72,6 @@ impl MergeBuilder {
             &vix_samples,
             vids,
             &alts,
-            flip,
             &criteria,
             feature,
             self.options.as_ref(),
@@ -172,7 +170,6 @@ pub fn construct_record(
     vix_samples: &Vec<usize>,
     vids: &Vec<String>,
     alts: &Vec<Option<String>>,
-    flip: bool,
     criteria: &str,
     feature: &str,
     options: &MergeOptions,
@@ -190,9 +187,9 @@ pub fn construct_record(
     }
     let (the_header, the_record) = the_record.unwrap();
 
-    let mut chrom = String::from(the_record.reference_sequence_name());
+    let chrom = String::from(the_record.reference_sequence_name());
 
-    let mut variant_start = if let Some(start) = the_record.variant_start() {
+    let variant_start = if let Some(start) = the_record.variant_start() {
         start?.get()
     } else {
         0
@@ -204,20 +201,6 @@ pub fn construct_record(
     let (reference_bases, alternate_bases) = make_ref_and_alt(&the_record, options.force_alt_tags)?;
     let mut reference_bases = reference_bases;
     let mut alternate_bases = alternate_bases;
-
-    if flip {
-        assert_eq!(alternate_bases.len(), 1);
-        let orig = BreakEnd::new(&chrom, variant_start, &alternate_bases[0])
-            .map_err(|e| Error::new(ErrorKind::Other, e))?;
-        log::info!("unflipped: {:?}", orig);
-        let flipped = orig.flip();
-        let flipped_fmt = flipped.format(reference.clone().unwrap().as_ref())?;
-        log::info!("flipped: {:?}", flipped_fmt);
-        chrom = flipped_fmt.0;
-        variant_start = flipped_fmt.1;
-        reference_bases = String::from(flipped_fmt.2);
-        alternate_bases[0] = flipped_fmt.3;
-    }
 
     let variant_start = if variant_start > 0 {
         Position::try_from(variant_start).unwrap()

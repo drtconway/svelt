@@ -21,14 +21,9 @@ pub async fn merge_with(
     ctx: &SessionContext,
     criterion: &str,
 ) -> std::io::Result<DataFrame> {
-    let flip = criterion == "flip";
-
-    let mut updates = make_merge_table(union, ctx)
+    let updates = make_merge_table(union, ctx)
         .await?
         .with_column("new_criterion", lit(criterion))?;
-    if flip {
-        updates = updates.with_column("new_flip", lit(true))?;
-    }
 
     if false {
         for field in tbl.schema().fields().iter() {
@@ -40,7 +35,7 @@ pub async fn merge_with(
         }
     }
 
-    let mut tbl = tbl
+    let tbl = tbl
         .join(
             updates,
             JoinType::Left,
@@ -74,49 +69,6 @@ pub async fn merge_with(
             "new_vix_count",
             "new_criterion",
         ])?;
-
-    // If we're flipping, then we need to swap over the chrom/chrom2 end/end2
-    //
-    if flip {
-        tbl = tbl
-            .with_column("flip", coalesce(vec![col("new_flip"), col("flip")]))?
-            .drop_columns(&["new_flip"])?;
-
-        let rhs = tbl.clone().filter(col("flip").eq(lit(true)))?.select(vec![
-            col("row_id").alias("flip_row_id"),
-            col("chrom").alias("flip_chrom"),
-            col("chrom_id").alias("flip_chrom_id"),
-            col("end").alias("flip_end"),
-            col("chrom2").alias("flip_chrom2"),
-            col("chrom2_id").alias("flip_chrom2_id"),
-            col("end2").alias("flip_end2"),
-        ])?;
-
-        tbl = tbl
-            .join(rhs, JoinType::Left, &["row_id"], &["flip_row_id"], None)?
-            .with_column("chrom", coalesce(vec![col("flip_chrom2"), col("chrom")]))?
-            .with_column(
-                "chrom_id",
-                coalesce(vec![col("flip_chrom2_id"), col("chrom_id")]),
-            )?
-            .with_column("start", coalesce(vec![col("flip_end2"), col("start")]))?
-            .with_column("end", coalesce(vec![col("flip_end2"), col("end")]))?
-            .with_column("chrom2", coalesce(vec![col("flip_chrom"), col("chrom2")]))?
-            .with_column(
-                "chrom2_id",
-                coalesce(vec![col("flip_chrom_id"), col("chrom2_id")]),
-            )?
-            .with_column("end2", coalesce(vec![col("flip_end"), col("end2")]))?
-            .drop_columns(&[
-                "flip_row_id",
-                "flip_chrom",
-                "flip_chrom_id",
-                "flip_end",
-                "flip_chrom2",
-                "flip_chrom2_id",
-                "flip_end2",
-            ])?;
-    }
 
     if false {
         tbl.clone()
@@ -166,7 +118,6 @@ async fn make_merge_table(union: DataFrame, ctx: &SessionContext) -> std::io::Re
 
             updated_row_keys.insert(lhs_row_key);
             updated_row_keys.insert(rhs_row_key);
-
 
             let z = sets.union(x, y);
             let vix_set = x_vix_set | y_vix_set;

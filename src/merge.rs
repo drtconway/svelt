@@ -5,10 +5,7 @@ use std::{
 
 use datafusion::{
     arrow::{
-        array::{
-            Array, BooleanArray, GenericStringArray, Int64Array, RecordBatch, StringViewArray,
-            UInt32Array,
-        },
+        array::{Array, GenericStringArray, Int64Array, RecordBatch, StringViewArray, UInt32Array},
         datatypes::DataType,
     },
     common::JoinType,
@@ -27,9 +24,8 @@ use crate::{
     construct::{MergeBuilder, add_svelt_header_fields},
     errors::as_io_error,
     merge::{
-        approx::{approx_bnd_join, approx_near_join},
+        approx::{approx_bnd_here_there_join, approx_bnd_there_here_join, approx_near_join},
         exact::{full_exact_bnd, full_exact_indel_join, full_exact_locus_ins_join},
-        flip::approx_flipped_bnd_join,
         report::produce_reporting_table,
         union::merge_with,
     },
@@ -43,7 +39,6 @@ use crate::{
 mod approx;
 mod classify;
 mod exact;
-mod flip;
 mod report;
 mod union;
 
@@ -90,7 +85,6 @@ pub async fn merge_vcfs(
         .with_column("row_key", cast(col("row_id"), DataType::UInt32))?
         .with_column("vix_count", lit(1))?
         .with_column("vix_set", col("vix"))?
-        .with_column("flip", lit(false))?
         .with_column("criteria", nullif(lit(""), lit("")))?;
 
     let mut results = orig.clone();
@@ -111,19 +105,19 @@ pub async fn merge_vcfs(
         results = merge_with(results, join, &ctx, "exact").await?;
     }
     if true {
-        log::info!("looking for approximate matches on breakends");
-        let join = approx_bnd_join(results.clone(), n, &options)?;
-        results = merge_with(results, join, &ctx, "approx").await?;
+        log::info!("looking for approximate matches on breakends (here-there)");
+        let join = approx_bnd_here_there_join(results.clone(), n, &options)?;
+        results = merge_with(results, join, &ctx, "here").await?;
+    }
+    if true {
+        log::info!("looking for approximate matches on breakends (there-here)");
+        let join = approx_bnd_there_here_join(results.clone(), n, &options)?;
+        results = merge_with(results, join, &ctx, "there").await?;
     }
     if true {
         log::info!("looking for nearby matches on indel type variants");
         let join = approx_near_join(results.clone(), n, &options, &ctx).await?;
         results = merge_with(results, join, &ctx, "near").await?;
-    }
-    if options.allow_breakend_flipping {
-        log::info!("looking for breakends we can flip");
-        let join = approx_flipped_bnd_join(results.clone(), n, &options)?;
-        results = merge_with(results, join, &ctx, "flip").await?;
     }
 
     let mut reference = None;
@@ -253,7 +247,6 @@ pub async fn merge_vcfs(
     let mut current_row: Vec<Option<u32>> = (0..n).into_iter().map(|_| None).collect();
     let mut current_row_ids: Vec<String> = (0..n).into_iter().map(|_| String::new()).collect();
     let mut current_row_alts: Vec<Option<String>> = (0..n).into_iter().map(|_| None).collect();
-    let mut current_row_flip = false;
     let mut current_row_criteria = String::new();
     let mut current_row_classification = None;
 
@@ -267,7 +260,6 @@ pub async fn merge_vcfs(
         let row_ids = get_array::<Int64Array>(&recs, "row_id");
         let row_keys = get_array::<UInt32Array>(&recs, "row_key");
         let alt_seqs = get_array::<GenericStringArray<i32>>(&recs, "alt_seq");
-        let flips = get_array::<BooleanArray>(&recs, "flip");
         let criteria = get_array::<GenericStringArray<i32>>(&recs, "criteria");
         let classifications = if annot {
             let feature = get_array::<StringViewArray>(&recs, "feature");
@@ -306,7 +298,6 @@ pub async fn merge_vcfs(
                         &vix_samples,
                         &current_row_ids,
                         &current_row_alts,
-                        current_row_flip,
                         &current_row_criteria,
                         &feat,
                     )?;
@@ -316,7 +307,6 @@ pub async fn merge_vcfs(
                 current_row_key = row_key;
                 current_row_ids = (0..n).into_iter().map(|_| String::new()).collect();
                 current_row_alts = (0..n).into_iter().map(|_| None).collect();
-                current_row_flip = false;
                 current_row_criteria = String::new();
                 current_row_classification = None;
             }
@@ -331,8 +321,6 @@ pub async fn merge_vcfs(
             if alt_seq.len() > 0 {
                 current_row_alts[vix as usize] = Some(String::from(alt_seq));
             }
-
-            current_row_flip |= flips.value(i);
 
             let crit = criteria.value(i);
             if crit.len() > current_row_criteria.len() {
@@ -373,7 +361,6 @@ pub async fn merge_vcfs(
             &vix_samples,
             &current_row_ids,
             &current_row_alts,
-            current_row_flip,
             &current_row_criteria,
             &feat,
         )?;

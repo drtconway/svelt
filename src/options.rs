@@ -50,13 +50,6 @@ pub struct MergeOptions {
         num_args = 0..=1,)]
     pub fill_in_refs: bool,
 
-    /// Allow breakend variants to be flipped
-    #[arg(long,
-        action = ArgAction::Set,
-        default_value_t = true,
-        default_missing_value = "true",
-        num_args = 0..=1,)]
-    pub allow_breakend_flipping: bool,
 }
 
 impl MergeOptions {
@@ -64,9 +57,6 @@ impl MergeOptions {
     pub fn check(&self) -> std::result::Result<(), SveltError> {
         if self.fill_in_refs && self.reference.is_none() {
             return Err(SveltError::OptionReferenceRequired(String::from("--fill-in-refs")));
-        }
-        if self.allow_breakend_flipping && self.reference.is_none() {
-            return Err(SveltError::OptionReferenceRequired(String::from("--allow-breakend-flipping")));
         }
         Ok(())
     }
