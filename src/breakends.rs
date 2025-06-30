@@ -1,9 +1,13 @@
 use std::cmp::max;
 
+use datafusion::{
+    common::JoinType,
+    prelude::{DataFrame, col, concat_ws, lit},
+};
 use noodles::{core::Position, fasta::Repository};
 use regex::Regex;
 
-use crate::errors::SveltError;
+use crate::{errors::SveltError, expressions::prefix_cols};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 pub enum BreakEndSide {
@@ -101,18 +105,60 @@ impl BreakEnd {
         let b = *b as char;
         let alt = match (side, side2) {
             (BreakEndSide::Before, BreakEndSide::Before) => {
-            format!("]{}:{}]{}", chrom2, end2, b)
+                format!("]{}:{}]{}", chrom2, end2, b)
             }
             (BreakEndSide::Before, BreakEndSide::After) => {
                 format!("[{}:{}[{}", chrom2, end2, b)
-            },
+            }
             (BreakEndSide::After, BreakEndSide::Before) => {
                 format!("{}]{}:{}]", b, chrom2, end2)
-            },
+            }
             (BreakEndSide::After, BreakEndSide::After) => {
                 format!("{}[{}:{}[", b, chrom2, end2)
-            },
+            }
         };
         Ok((chrom.clone(), end, b, alt))
     }
+}
+
+pub(crate) async fn unpaired_breakend_check(tbl: DataFrame) -> std::io::Result<DataFrame> {
+    let df = tbl
+        .clone()
+        .filter(col("kind").eq(lit("BND")))?
+        .with_column(
+            "here_there",
+            concat_ws(
+                lit("_"),
+                vec![col("chrom"), col("end"), col("chrom2"), col("end2")],
+            ),
+        )?
+        .with_column(
+            "there_here",
+            concat_ws(
+                lit("_"),
+                vec![col("chrom2"), col("end2"), col("chrom"), col("end")],
+            ),
+        )?;
+
+    let lhs = prefix_cols(df.clone(), "lhs")?;
+    let rhs = prefix_cols(df.clone(), "rhs")?;
+
+    let paired = lhs
+        .join(
+            rhs,
+            JoinType::Left,
+            &["lhs_vix", "lhs_here_there"],
+            &["rhs_vix", "rhs_there_here"],
+            None,
+        )?
+        .with_column("paired_bnd", col("rhs_row_id").is_not_null())?
+        .select_columns(&["lhs_row_id", "paired_bnd"])?;
+
+    // paired.sort_by(vec![col("lhs_row_id")])?.show().await?;
+
+    let tbl = tbl
+        .join(paired, JoinType::Left, &["row_id"], &["lhs_row_id"], None)?
+        .drop_columns(&["lhs_row_id"])?;
+
+    Ok(tbl)
 }

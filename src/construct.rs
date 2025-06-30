@@ -7,8 +7,9 @@ use autocompress::{CompressionLevel, Processor, autodetect_create};
 use noodles::core::Position;
 use noodles::fasta::Repository;
 use noodles::vcf;
-use noodles::vcf::header::record::value::map::Builder;
+use noodles::vcf::header::record::value::Map;
 use noodles::vcf::header::record::value::map::info::{Number, Type};
+use noodles::vcf::header::record::value::map::{Builder, Filter};
 use noodles::vcf::variant::io::Write;
 use noodles::vcf::variant::record::{
     AlternateBases as AlternateBases_, Filters as Filters_, Ids as Ids_,
@@ -63,6 +64,7 @@ impl MergeBuilder {
         vix_samples: &Vec<usize>,
         vids: &Vec<String>,
         alts: &Vec<Option<String>>,
+        paired_bnd: bool,
         criteria: &str,
         feature: &str,
     ) -> std::io::Result<()> {
@@ -72,6 +74,7 @@ impl MergeBuilder {
             &vix_samples,
             vids,
             &alts,
+            paired_bnd,
             &criteria,
             feature,
             self.options.as_ref(),
@@ -90,6 +93,15 @@ pub fn add_svelt_header_fields(
     header: &mut Header,
     unwanted_info: &Vec<String>,
 ) -> std::io::Result<()> {
+    let filters = header.filters_mut();
+
+    if filters.get("UNPAIRED_BND").is_none() {
+        filters.insert(
+            String::from("UNPAIRED_BND"),
+            Map::<Filter>::new("Breakend variant does not have a symmetric pair"),
+        );
+    }
+
     let infos = header.infos_mut();
 
     if infos.get("CHR2").is_none() {
@@ -170,6 +182,7 @@ pub fn construct_record(
     vix_samples: &Vec<usize>,
     vids: &Vec<String>,
     alts: &Vec<Option<String>>,
+    paired_bnd: bool,
     criteria: &str,
     feature: &str,
     options: &MergeOptions,
@@ -268,6 +281,9 @@ pub fn construct_record(
                 filters.insert(String::from(filter));
             }
         }
+    }
+    if chrom2.is_some() && !paired_bnd {
+        filters.insert(String::from("UNPAIRED_BND"));
     }
     let mut filters: Vec<String> = filters.into_iter().collect();
     filters.sort();

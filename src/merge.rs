@@ -5,13 +5,13 @@ use std::{
 
 use datafusion::{
     arrow::{
-        array::{Array, GenericStringArray, Int64Array, RecordBatch, StringViewArray, UInt32Array},
+        array::{Array, BooleanArray, GenericStringArray, Int64Array, RecordBatch, StringViewArray, UInt32Array},
         datatypes::DataType,
     },
     common::JoinType,
     functions_aggregate::expr_fn::first_value,
     prelude::{
-        DataFrame, cast, col, concat, concat_ws, encode, left, length, lit, nullif, sha256, to_hex,
+        cast, col, concat, concat_ws, encode, left, length, lit, nullif, sha256, to_hex, DataFrame
     },
 };
 use noodles::{
@@ -20,20 +20,12 @@ use noodles::{
 };
 
 use crate::{
-    chroms::ChromSet,
-    construct::{MergeBuilder, add_svelt_header_fields},
-    errors::as_io_error,
-    merge::{
+    breakends::unpaired_breakend_check, chroms::ChromSet, construct::{add_svelt_header_fields, MergeBuilder}, errors::as_io_error, merge::{
         approx::{approx_bnd_here_there_join, approx_bnd_there_here_join, approx_near_join},
         exact::{full_exact_bnd, full_exact_indel_join, full_exact_locus_ins_join},
         report::produce_reporting_table,
         union::merge_with,
-    },
-    options::{CommonOptions, MergeOptions, make_session_context},
-    record_seeker::RecordSeeker,
-    row_key::RowKey,
-    tables::load_vcf_core,
-    vcf_reader::VcfReader,
+    }, options::{make_session_context, CommonOptions, MergeOptions}, record_seeker::RecordSeeker, row_key::RowKey, tables::load_vcf_core, vcf_reader::VcfReader
 };
 
 mod approx;
@@ -120,6 +112,8 @@ pub async fn merge_vcfs(
         results = merge_with(results, join, &ctx, "near").await?;
     }
 
+    results = unpaired_breakend_check(results).await?;
+
     let mut reference = None;
     if let Some(reference_filename) = &options.reference {
         let reference_reader =
@@ -177,6 +171,7 @@ pub async fn merge_vcfs(
         }
     }
 
+    // Put together a unique ID
     results = results
         .with_column(
             "vid",
@@ -247,6 +242,7 @@ pub async fn merge_vcfs(
     let mut current_row: Vec<Option<u32>> = (0..n).into_iter().map(|_| None).collect();
     let mut current_row_ids: Vec<String> = (0..n).into_iter().map(|_| String::new()).collect();
     let mut current_row_alts: Vec<Option<String>> = (0..n).into_iter().map(|_| None).collect();
+    let mut current_row_paired_bnd = false;
     let mut current_row_criteria = String::new();
     let mut current_row_classification = None;
 
@@ -260,6 +256,7 @@ pub async fn merge_vcfs(
         let row_ids = get_array::<Int64Array>(&recs, "row_id");
         let row_keys = get_array::<UInt32Array>(&recs, "row_key");
         let alt_seqs = get_array::<GenericStringArray<i32>>(&recs, "alt_seq");
+        let paired_bnds = get_array::<BooleanArray>(&recs, "paired_bnd");
         let criteria = get_array::<GenericStringArray<i32>>(&recs, "criteria");
         let classifications = if annot {
             let feature = get_array::<StringViewArray>(&recs, "feature");
@@ -298,6 +295,7 @@ pub async fn merge_vcfs(
                         &vix_samples,
                         &current_row_ids,
                         &current_row_alts,
+                        current_row_paired_bnd,
                         &current_row_criteria,
                         &feat,
                     )?;
@@ -307,6 +305,7 @@ pub async fn merge_vcfs(
                 current_row_key = row_key;
                 current_row_ids = (0..n).into_iter().map(|_| String::new()).collect();
                 current_row_alts = (0..n).into_iter().map(|_| None).collect();
+                current_row_paired_bnd = false;
                 current_row_criteria = String::new();
                 current_row_classification = None;
             }
@@ -321,6 +320,8 @@ pub async fn merge_vcfs(
             if alt_seq.len() > 0 {
                 current_row_alts[vix as usize] = Some(String::from(alt_seq));
             }
+
+            current_row_paired_bnd |= paired_bnds.value(i);
 
             let crit = criteria.value(i);
             if crit.len() > current_row_criteria.len() {
@@ -361,6 +362,7 @@ pub async fn merge_vcfs(
             &vix_samples,
             &current_row_ids,
             &current_row_alts,
+            current_row_paired_bnd,
             &current_row_criteria,
             &feat,
         )?;
