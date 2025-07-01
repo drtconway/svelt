@@ -10,11 +10,11 @@ library(ggplot2)
 ```
 
 ```{r}
-vcf <- readVcf("D:/Development/x.vcf")
+vcf <- readVcf("x.vcf")
 ```
 
 ```{r marshal, echo=F}
- gt <- as.data.table(geno(vcf)$GT)
+gt <- as.data.table(geno(vcf)$GT)
 gt[gt == "."] <- NA
 gt[, id := rownames(geno(vcf)$GT)]
 gt[, svtype := info(vcf)$SVTYPE]
