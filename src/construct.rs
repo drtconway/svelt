@@ -232,7 +232,8 @@ pub fn construct_record(
         if reference_bases == "N" || reference_bases == "n" {
             let seq = reference.clone().unwrap().get(chrom.as_ref()).unwrap()?;
             let pos = Position::try_from(variant_start).unwrap();
-            let b: &u8 = seq.get(pos).unwrap();
+            log::info!("For {} [0,{}), getting {}", chrom, seq.len(), pos);
+            let b: &u8 = if pos.get() < seq.len() { seq.get(pos).unwrap() } else { &b'N' };
             let b = *b as char;
             reference_bases = String::from(b);
         }
@@ -245,13 +246,13 @@ pub fn construct_record(
                 if alt.starts_with('N') || alt.starts_with('n') {
                     let seq = reference.clone().unwrap().get(chrom.as_ref()).unwrap()?;
                     let pos = Position::try_from(variant_start).unwrap();
-                    let b: &u8 = seq.get(pos).unwrap();
+                    let b: &u8 = if pos.get() < seq.len() { seq.get(pos).unwrap() } else { &b'N' };
                     let b = *b as char;
                     alternate_bases[i] = format!("{}{}", b, &alt[1..]);
                 } else if alt.ends_with('N') || alt.starts_with('n') {
                     let seq = reference.clone().unwrap().get(chrom.as_ref()).unwrap()?;
                     let pos = Position::try_from(variant_start).unwrap();
-                    let b: &u8 = seq.get(pos).unwrap();
+                    let b: &u8 = if pos.get() < seq.len() { seq.get(pos).unwrap() } else { &b'N' };
                     let b = *b as char;
                     alternate_bases[i] = format!("{}{}", &alt[0..(alt.len() - 1)], b);
                 }
