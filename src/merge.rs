@@ -69,7 +69,7 @@ pub async fn merge_vcfs(
     for vix in 0..readers.len() {
         log::info!("reading {}", readers[vix].path);
         let reader: &mut VcfReader = &mut readers[vix];
-        let records = load_vcf_core(reader)?;
+        let records = load_vcf_core(reader).map_err(|e| wrap_file_error(e, &readers[vix].path))?;
         let df = ctx
             .read_batch(records)
             .map_err(|e| Error::new(ErrorKind::Other, e))?;
