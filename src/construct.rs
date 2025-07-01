@@ -232,7 +232,6 @@ pub fn construct_record(
         if reference_bases == "N" || reference_bases == "n" {
             let seq = reference.clone().unwrap().get(chrom.as_ref()).unwrap()?;
             let pos = Position::try_from(variant_start).unwrap();
-            log::info!("For {} [0,{}), getting {}", chrom, seq.len(), pos);
             let b: &u8 = if pos.get() < seq.len() { seq.get(pos).unwrap() } else { &b'N' };
             let b = *b as char;
             reference_bases = String::from(b);
