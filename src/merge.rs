@@ -75,7 +75,7 @@ pub async fn merge_vcfs(
             .map_err(|e| Error::new(ErrorKind::Other, e))?;
         let df = df
             .with_column("vix", lit(1u32 << vix))?
-            .with_column("row_id", lit(vix as u32) + (col("row_num") * lit(100)))?;
+            .with_column("row_id", RowKey::make(col("row_num"), vix as u32))?;
 
         if let Some(df0) = acc {
             let df = df0.union(df)?;

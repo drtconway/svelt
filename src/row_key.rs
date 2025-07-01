@@ -1,3 +1,5 @@
+use datafusion::prelude::{lit, Expr};
+
 /// We make a "global" key for each row of each VCF by composing the VCF number (or VCF index `vix`)
 /// and the row number. The number of VCFs is constrained to 64 elsewhere, and the number of variants
 /// in each VCF is (effectively) unconstrained, so we encode the VCF index in the low order bits,
@@ -17,4 +19,9 @@ impl RowKey {
     pub fn decode(key: u32) -> (u32, u32) {
         (key % 100, key / 100)
     }
+
+    pub fn make(row_num: Expr, vix: u32) -> Expr {
+        lit(vix) + row_num * lit(100)
+    }
 }
+
