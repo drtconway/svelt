@@ -25,15 +25,15 @@ use noodles::{
 use crate::{
     breakends::unpaired_breakend_check,
     chroms::ChromSet,
-    construct::{MergeBuilder, add_svelt_header_fields},
+    construct::{add_svelt_header_fields, MergeBuilder},
     errors::{as_io_error, wrap_file_error},
     merge::{
         approx::{approx_bnd_here_there_join, approx_bnd_there_here_join, approx_near_join},
         exact::{full_exact_bnd, full_exact_indel_join, full_exact_locus_ins_join},
         report::produce_reporting_table,
-        union::merge_with,
+        union::merge_with, variant_id::make_variant_ids,
     },
-    options::{CommonOptions, MergeOptions, make_session_context},
+    options::{make_session_context, CommonOptions, MergeOptions},
     record_seeker::RecordSeeker,
     row_key::RowKey,
     tables::load_vcf_core,
@@ -45,6 +45,7 @@ mod classify;
 mod exact;
 mod report;
 mod union;
+mod variant_id;
 
 pub async fn merge_vcfs(
     out: &str,
@@ -183,34 +184,8 @@ pub async fn merge_vcfs(
         }
     }
 
-    // Put together a unique ID
-    results = results
-        .with_column(
-            "vid",
-            concat_ws(
-                lit("_"),
-                vec![
-                    col("kind"),
-                    col("chrom"),
-                    col("start"),
-                    col("end"),
-                    col("length"),
-                    col("chrom2"),
-                    col("end2"),
-                    col("seq_hash"),
-                ],
-            ),
-        )?
-        .with_column("vid_hash", encode(sha256(col("vid")), lit("hex")))?
-        .with_column(
-            "variant_id",
-            concat_ws(
-                lit("_"),
-                vec![lit("SVELT"), col("kind"), left(col("vid_hash"), lit(8))],
-            ),
-        )?
-        .drop_columns(&["vid", "vid_hash"])?;
-
+    results = make_variant_ids(results).await?;
+    
     results = add_primary_cols(results)?;
 
     if let Some(table_out) = &options.write_merge_table {
