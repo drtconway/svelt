@@ -13,9 +13,7 @@ use datafusion::{
     },
     common::JoinType,
     functions_aggregate::expr_fn::first_value,
-    prelude::{
-        DataFrame, cast, col, concat, concat_ws, encode, left, length, lit, nullif, sha256, to_hex,
-    },
+    prelude::{DataFrame, cast, col, concat, length, lit, nullif, to_hex},
 };
 use noodles::{
     fasta::{self, repository::adapters::IndexedReader},
@@ -25,15 +23,16 @@ use noodles::{
 use crate::{
     breakends::unpaired_breakend_check,
     chroms::ChromSet,
-    construct::{add_svelt_header_fields, MergeBuilder},
+    construct::{MergeBuilder, add_svelt_header_fields},
     errors::{as_io_error, wrap_file_error},
     merge::{
         approx::{approx_bnd_here_there_join, approx_bnd_there_here_join, approx_near_join},
         exact::{full_exact_bnd, full_exact_indel_join, full_exact_locus_ins_join},
         report::produce_reporting_table,
-        union::merge_with, variant_id::construct_variant_ids,
+        union::merge_with,
+        variant_id::construct_variant_ids,
     },
-    options::{make_session_context, CommonOptions, MergeOptions},
+    options::{CommonOptions, MergeOptions, make_session_context},
     record_seeker::RecordSeeker,
     row_key::RowKey,
     tables::load_vcf_core,

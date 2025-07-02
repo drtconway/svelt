@@ -12,9 +12,7 @@ use datafusion::{
     error::DataFusionError,
     functions_aggregate::expr_fn::first_value,
     logical_expr::{ColumnarValue, ScalarUDF, Volatility},
-    prelude::{
-        DataFrame, SessionContext, SimpleScalarUDF, col, concat_ws, encode, left, lit, sha256,
-    },
+    prelude::{DataFrame, SessionContext, SimpleScalarUDF, col, concat_ws, left, lit, sha256},
 };
 
 /// Generate values to populate the ID column.
