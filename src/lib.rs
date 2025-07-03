@@ -10,6 +10,7 @@ pub mod features;
 pub mod heap;
 pub mod homology;
 pub mod inputs;
+pub mod iterators;
 pub mod kmers;
 pub mod kmers_table;
 pub mod merge;
