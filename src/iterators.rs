@@ -1,87 +1,8 @@
 use std::iter::{Zip, zip};
 
-use datafusion::arrow::array::{
-    Array, Int8Array, Int16Array, Int32Array, Int64Array, RecordBatch, StringArray, UInt8Array,
-    UInt16Array, UInt32Array, UInt64Array,
-};
+use datafusion::arrow::array::{Array, RecordBatch};
 
-pub trait ArrayWithType<'a>: Array + 'static {
-    type ValueType;
-
-    fn value(&'a self, i: usize) -> Self::ValueType;
-}
-
-impl<'a> ArrayWithType<'a> for UInt8Array {
-    type ValueType = u8;
-
-    fn value(&'a self, i: usize) -> Self::ValueType {
-        UInt8Array::value(self, i)
-    }
-}
-
-impl<'a> ArrayWithType<'a> for UInt16Array {
-    type ValueType = u16;
-
-    fn value(&self, i: usize) -> Self::ValueType {
-        UInt16Array::value(self, i)
-    }
-}
-
-impl<'a> ArrayWithType<'a> for UInt32Array {
-    type ValueType = u32;
-
-    fn value(&'a self, i: usize) -> Self::ValueType {
-        UInt32Array::value(self, i)
-    }
-}
-
-impl<'a> ArrayWithType<'a> for UInt64Array {
-    type ValueType = u64;
-
-    fn value(&'a self, i: usize) -> Self::ValueType {
-        UInt64Array::value(self, i)
-    }
-}
-
-impl<'a> ArrayWithType<'a> for Int8Array {
-    type ValueType = i8;
-
-    fn value(&'a self, i: usize) -> Self::ValueType {
-        Int8Array::value(self, i)
-    }
-}
-
-impl<'a> ArrayWithType<'a> for Int16Array {
-    type ValueType = i16;
-
-    fn value(&'a self, i: usize) -> Self::ValueType {
-        Int16Array::value(self, i)
-    }
-}
-
-impl<'a> ArrayWithType<'a> for Int32Array {
-    type ValueType = i32;
-
-    fn value(&'a self, i: usize) -> Self::ValueType {
-        Int32Array::value(self, i)
-    }
-}
-
-impl<'a> ArrayWithType<'a> for Int64Array {
-    type ValueType = i64;
-
-    fn value(&'a self, i: usize) -> Self::ValueType {
-        Int64Array::value(self, i)
-    }
-}
-
-impl<'a> ArrayWithType<'a> for StringArray {
-    type ValueType = &'a str;
-
-    fn value(&'a self, i: usize) -> Self::ValueType {
-        StringArray::value(self, i)
-    }
-}
+use crate::arrays::ArrayWithType;
 
 pub struct ColumnIterator2<'a, Col1Type: ArrayWithType<'a>, Col2Type: ArrayWithType<'a>> {
     col1: &'a Col1Type,
@@ -299,6 +220,9 @@ fn get_array<'a, Type: 'static>(recs: &'a RecordBatch, name: &str) -> &'a Type {
 mod tests {
     use std::sync::Arc;
 
+    use datafusion::arrow::array::{
+        Int16Array, RecordBatch, StringArray, UInt16Array, UInt32Array, UInt64Array,
+    };
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
 
     use super::*;

@@ -1,4 +1,6 @@
+pub mod arrays;
 pub mod breakends;
+pub mod builders;
 pub mod chroms;
 pub mod construct;
 pub mod disjoint_set;
