@@ -97,12 +97,7 @@ enum Commands {
     },
 }
 
-#[tokio::main]
-async fn main() -> std::io::Result<()> {
-    env_logger::builder()
-        .filter_level(log::LevelFilter::Info)
-        .init();
-
+async fn main_inner() -> std::io::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
@@ -144,5 +139,23 @@ async fn main() -> std::io::Result<()> {
             cluster_sequences(&sequences, &out, k, cutoff, &common).await?;
         }
     }
+
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    env_logger::builder()
+        .filter_level(log::LevelFilter::Info)
+        .init();
+
+    let res = main_inner().await;
+    match res {
+        Ok(_) => {},
+        Err(error) => {
+            eprintln!("{}", error.to_string());
+        },
+    }
+
     Ok(())
 }
