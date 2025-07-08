@@ -454,8 +454,12 @@ fn make_ref_and_alt(rec: &Record, force_alt_tags: bool) -> std::io::Result<(Stri
 }
 
 fn make_empty_fmt_value(options: &MergeOptions, key: &str) -> Option<Value> {
-    if options.use_ref_alleles && key == "GT" {
-        let gt = Genotype::from_str("0/0").unwrap();
+    if key == "GT" {
+        let gt = if options.use_ref_alleles {
+            Genotype::from_str("0/0").unwrap()
+        } else {
+            Genotype::from_str("./.").unwrap()
+        };
         Some(Value::Genotype(gt))
     } else {
         None
