@@ -50,13 +50,22 @@ pub struct MergeOptions {
         num_args = 0..=1,)]
     pub fill_in_refs: bool,
 
+    /// Fill in unknown alleles with ref (0/0) rather than unknown.
+    #[arg(long,
+    action = ArgAction::Set,
+    default_value_t = true,
+    default_missing_value = "true",
+    num_args = 0..=1,)]
+    pub use_ref_alleles: bool,
 }
 
 impl MergeOptions {
     /// Check merge options for mutual consistency
     pub fn check(&self) -> std::result::Result<(), SveltError> {
         if self.fill_in_refs && self.reference.is_none() {
-            return Err(SveltError::OptionReferenceRequired(String::from("--fill-in-refs")));
+            return Err(SveltError::OptionReferenceRequired(String::from(
+                "--fill-in-refs",
+            )));
         }
         Ok(())
     }
@@ -66,11 +75,15 @@ impl MergeOptions {
 #[derive(Debug, Args)]
 pub struct IndexingOptions {
     /// k-mer length
-     #[arg(short, long, required = false, default_value = "11")]
+    #[arg(short, long, required = false, default_value = "11")]
     pub k: usize,
 
     /// Regular expression for parsing names
-     #[arg(long, required = false, default_value = "(?<class>[^/]+/[^/]+)/(?<name>[^(]+).*")]
+    #[arg(
+        long,
+        required = false,
+        default_value = "(?<class>[^/]+/[^/]+)/(?<name>[^(]+).*"
+    )]
     pub pattern: String,
 
     /// Replacement to get the name (use $ to reference name/number groups)
@@ -98,7 +111,6 @@ pub struct QueryOptions {
     /// or from SVELT_ALT_SEQ).
     #[arg(short, long)]
     pub vcf: Option<String>,
-
 }
 
 /// Options common to all commands

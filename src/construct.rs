@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::io::{BufWriter, Error, ErrorKind};
 use std::rc::Rc;
+use std::str::FromStr;
 
 use autocompress::io::ProcessorWriter;
 use autocompress::{CompressionLevel, Processor, autodetect_create};
@@ -232,7 +233,11 @@ pub fn construct_record(
         if reference_bases == "N" || reference_bases == "n" {
             let seq = reference.clone().unwrap().get(chrom.as_ref()).unwrap()?;
             let pos = Position::try_from(variant_start).unwrap();
-            let b: &u8 = if pos.get() < seq.len() { seq.get(pos).unwrap() } else { &b'N' };
+            let b: &u8 = if pos.get() < seq.len() {
+                seq.get(pos).unwrap()
+            } else {
+                &b'N'
+            };
             let b = *b as char;
             reference_bases = String::from(b);
         }
@@ -245,13 +250,21 @@ pub fn construct_record(
                 if alt.starts_with('N') || alt.starts_with('n') {
                     let seq = reference.clone().unwrap().get(chrom.as_ref()).unwrap()?;
                     let pos = Position::try_from(variant_start).unwrap();
-                    let b: &u8 = if pos.get() < seq.len() { seq.get(pos).unwrap() } else { &b'N' };
+                    let b: &u8 = if pos.get() < seq.len() {
+                        seq.get(pos).unwrap()
+                    } else {
+                        &b'N'
+                    };
                     let b = *b as char;
                     alternate_bases[i] = format!("{}{}", b, &alt[1..]);
                 } else if alt.ends_with('N') || alt.starts_with('n') {
                     let seq = reference.clone().unwrap().get(chrom.as_ref()).unwrap()?;
                     let pos = Position::try_from(variant_start).unwrap();
-                    let b: &u8 = if pos.get() < seq.len() { seq.get(pos).unwrap() } else { &b'N' };
+                    let b: &u8 = if pos.get() < seq.len() {
+                        seq.get(pos).unwrap()
+                    } else {
+                        &b'N'
+                    };
                     let b = *b as char;
                     alternate_bases[i] = format!("{}{}", &alt[0..(alt.len() - 1)], b);
                 }
@@ -296,6 +309,8 @@ pub fn construct_record(
             for id in hnr.1.ids().iter() {
                 original_ids.push(Some(String::from(id)));
             }
+        } else {
+            original_ids.push(None);
         }
     }
 
@@ -386,7 +401,10 @@ pub fn construct_record(
             }
             None => {
                 for _ in 0..vix_samples[vix] {
-                    let fields: Vec<Option<Value>> = (0..keys.len()).map(|_| None).collect();
+                    let fields: Vec<Option<Value>> = keys
+                        .iter()
+                        .map(|k| make_empty_fmt_value(options, k))
+                        .collect();
                     samples.push(fields);
                 }
             }
@@ -433,6 +451,15 @@ fn make_ref_and_alt(rec: &Record, force_alt_tags: bool) -> std::io::Result<(Stri
     }
 
     Ok((reference_bases, alternate_bases))
+}
+
+fn make_empty_fmt_value(options: &MergeOptions, key: &str) -> Option<Value> {
+    if options.use_ref_alleles && key == "GT" {
+        let gt = Genotype::from_str("0/0").unwrap();
+        Some(Value::Genotype(gt))
+    } else {
+        None
+    }
 }
 
 fn make_info_value(

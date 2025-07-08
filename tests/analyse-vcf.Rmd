@@ -9,8 +9,28 @@ library(data.table)
 library(ggplot2)
 ```
 
-```{r}
-vcf <- readVcf("x.vcf")
+```{r, echo=FALSE}
+merged.vcf <- readVcf("x.vcf")
+orig.vcf1 <- readVcf("data/NA20762.sniffles.vcf")
+orig.vcf2 <- readVcf("data/NA20809.sniffles.vcf")
+orig.vcf3 <- readVcf("data/NA20827.sniffles.vcf")
+```
+
+```{r get.ids, echo=FALSE}
+ids.tbl <- data.table(merged = rownames(merged.vcf),
+                      merged1 = sapply(info(merged.vcf)$ORIGINAL_IDS, function(x) x[1]), 
+                      merged2 = sapply(info(merged.vcf)$ORIGINAL_IDS, function(x) x[2]),
+                      merged3 = sapply(info(merged.vcf)$ORIGINAL_IDS, function(x) x[1]))
+ids.tbl[ids.tbl == "."] <- NA
+
+orig1.ids <- data.table(orig1 = rownames(orig.vcf1))
+```
+
+```{r check.ids}
+ids.tbl[!is.na(merged1), .(lhs = sum(!(merged1 %in% orig1.ids$orig1)), rhs = sum(!(orig1.ids$orig1 %in% merged1)))]
+ids.tbl[!is.na(merged1), .(lhs = length(merged1), rhs = length(unique(merged1)))]
+ids.tbl[!is.na(merged2), .(lhs = length(merged2), rhs = length(unique(merged2)))]
+ids.tbl[!is.na(merged3), .(lhs = length(merged3), rhs = length(unique(merged3)))]
 ```
 
 ```{r marshal, echo=F}
