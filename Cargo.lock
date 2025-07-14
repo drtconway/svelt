@@ -639,9 +639,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.40"
+version = "4.5.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40b6887a1d8685cebccf115538db5c0efe625ccac9696ad45c409d96566e910f"
+checksum = "be92d32e80243a54711e5d7ce823c35c41c9d929dc4ab58e1276f625841aadf9"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -649,9 +649,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.5.40"
+version = "4.5.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0c66c08ce9f0c698cbce5c0279d0bb6ac936d8674174fe48f736533b964f59e"
+checksum = "707eab41e9622f9139419d573eca0900137718000c517d47da73045f54331c3d"
 dependencies = [
  "anstream",
  "anstyle",
@@ -661,9 +661,9 @@ dependencies = [
 
 [[package]]
 name = "clap_derive"
-version = "4.5.40"
+version = "4.5.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2c7947ae4cc3d851207c1adb5b5e260ff0cca11446b1d6d1423788e442257ce"
+checksum = "ef4f52386a59ca4c860f7393bcf8abd8dfd91ecccc0f774635ff68e92eeef491"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -2142,9 +2142,9 @@ dependencies = [
 
 [[package]]
 name = "noodles"
-version = "0.99.0"
+version = "0.100.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "110e4a86fc1551a6480a47c7ff52176dc314b3f20355550bd542f05bce65ead2"
+checksum = "8a5d9c17e7b3fd97eee958bfba83522d3da540c395f7ae071a8fa4bb7e85969e"
 dependencies = [
  "noodles-bed",
  "noodles-bgzf",
@@ -2155,9 +2155,9 @@ dependencies = [
 
 [[package]]
 name = "noodles-bed"
-version = "0.26.0"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b1628807aa4c3068c91c84592389b38304825dcbe0f9b0bb0f9382c94f11fc7"
+checksum = "081b1c4914321d36d8607a8375edc5232dae9fe457fdfb8871c8d6aaa8a32c8e"
 dependencies = [
  "bstr",
  "lexical-core",
@@ -2170,11 +2170,10 @@ dependencies = [
 
 [[package]]
 name = "noodles-bgzf"
-version = "0.41.0"
+version = "0.42.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f07e5d75eb7e00c1fe140acef39dea0aea2f48a05ab698a16c6797dd0c0db7e4"
+checksum = "7c1c3e3f19c4afd0c540104e596a9312074de9d0c01bedd5370ffba62ba3b439"
 dependencies = [
- "byteorder",
  "bytes",
  "crossbeam-channel",
  "flate2",
@@ -2182,18 +2181,18 @@ dependencies = [
 
 [[package]]
 name = "noodles-core"
-version = "0.17.0"
+version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce89752158657dd1d7195061e9d9190e2d3bb594eb71086762163d4a430b0b4b"
+checksum = "8ebfc6396fb51059c98a35bb81b96422ac41ea1bc60b6c8e9c6b2550212e9493"
 dependencies = [
  "bstr",
 ]
 
 [[package]]
 name = "noodles-csi"
-version = "0.49.0"
+version = "0.50.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c291585d38573d80921a9b57b47f1da57fdf24969ed8fe0b0f79acc1cce18a42"
+checksum = "e055462495239a7e401d2c545c87731f9c5b909f95cea402d83149d353a69da9"
 dependencies = [
  "bit-vec",
  "bstr",
@@ -2205,9 +2204,9 @@ dependencies = [
 
 [[package]]
 name = "noodles-fasta"
-version = "0.54.0"
+version = "0.55.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b181ca5d47c6df72e91fa559ae4920bf521a047a73e6fdab00df2d358e1b3ae"
+checksum = "14177428353582ddf66eb8895a6fb0ef3cd3b6296d4f6b5b5fcb5f14bf0fdca0"
 dependencies = [
  "bstr",
  "bytes",
@@ -2218,9 +2217,9 @@ dependencies = [
 
 [[package]]
 name = "noodles-tabix"
-version = "0.55.0"
+version = "0.56.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "461b6173ee2ec38d7ddbce206c31c83d8c7b61d6a5db2b2c4ff2ac74653ac751"
+checksum = "07ba0481a5ea82a7c6f87f2d7ea0404fd17b1afffb5796c4bb7f01e8322021cb"
 dependencies = [
  "byteorder",
  "indexmap",
@@ -2231,9 +2230,9 @@ dependencies = [
 
 [[package]]
 name = "noodles-vcf"
-version = "0.79.0"
+version = "0.80.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66a25338ccdeafd3b96071b7b11c3ad03b6a735eaacab6589f62879203a59dc9"
+checksum = "6e12789efb7cdfe2b2cbb9055477b6a4375d14825d23cea73345d5668a372049"
 dependencies = [
  "indexmap",
  "memchr",

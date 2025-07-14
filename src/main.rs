@@ -3,7 +3,7 @@ use std::rc::Rc;
 use clap::{Parser, Subcommand};
 use svelt::{
     features::FeatureIndex,
-    homology::{cluster_sequences, find_similar},
+    homology::find_similar,
     merge::merge_vcfs,
     options::{CommonOptions, IndexingOptions, MergeOptions, QueryOptions, make_session_context},
 };
@@ -72,29 +72,6 @@ enum Commands {
         #[command(flatten)]
         common: CommonOptions,
     },
-
-    /// Group similar sequences, and select a representative from each group
-    #[command(arg_required_else_help = true)]
-    ClusterSequences {
-        /// Name of FASTA file with sequences to cluster
-        #[arg(short, long)]
-        sequences: String,
-
-        /// Name of FASTA file to write the output to
-        #[arg(short, long)]
-        out: String,
-
-        /// k-mer length
-        #[arg(short, long, required = false, default_value = "11")]
-        k: usize,
-
-        /// dot-product cutoff for clustering
-        #[arg(short, long, required = false, default_value = "0.01")]
-        cutoff: f64,
-
-        #[command(flatten)]
-        common: CommonOptions,
-    },
 }
 
 async fn main_inner() -> std::io::Result<()> {
@@ -129,15 +106,6 @@ async fn main_inner() -> std::io::Result<()> {
         } => {
             find_similar(&features, &query, k, &common).await?;
         }
-        Commands::ClusterSequences {
-            sequences,
-            out,
-            k,
-            cutoff,
-            common,
-        } => {
-            cluster_sequences(&sequences, &out, k, cutoff, &common).await?;
-        }
     }
 
     Ok(())
@@ -151,10 +119,10 @@ async fn main() -> std::io::Result<()> {
 
     let res = main_inner().await;
     match res {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(error) => {
             eprintln!("{}", error.to_string());
-        },
+        }
     }
 
     Ok(())
