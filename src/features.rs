@@ -1,34 +1,39 @@
 use std::{
+    collections::HashMap,
+    fmt::format,
+    fs::File,
     io::{BufReader, Error, ErrorKind},
+    iter::zip,
     sync::Arc,
 };
 
-use autocompress::autodetect_open;
+use autocompress::{CompressionLevel, autodetect_open};
 use datafusion::{
     arrow::{
-        array::{GenericStringBuilder, PrimitiveBuilder, RecordBatch},
-        datatypes::{DataType, Field, Schema, UInt32Type},
+        array::{
+            Float64Array, GenericStringBuilder, PrimitiveBuilder, RecordBatch, StringArray, UInt32Array, UInt64Array
+        },
+        datatypes::{DataType, Field, Float64Type, Schema, UInt32Type, UInt64Type},
     },
     common::JoinType,
-    config::{ParquetColumnOptions, TableParquetOptions},
-    dataframe::DataFrameWriteOptions,
-    functions_aggregate::count::count,
-    prelude::{DataFrame, ParquetReadOptions, SessionContext, col, lit, regexp_replace},
+    parquet::arrow::{arrow_reader::ParquetRecordBatchReaderBuilder, ArrowWriter},
+    prelude::{col, lit, DataFrame, ParquetReadOptions, SessionContext},
 };
 use noodles::fasta;
 
 use crate::{
     distance::{DistanceMetric, distance, needleman_wunsch::align},
     errors::{SveltError, as_io_error, wrap_file_error},
-    kmers::kmerize::kmers_fwd,
+    kmers::{KmerIterator, kmerize::kmers_fwd},
     options::IndexingOptions,
 };
 
 pub struct FeatureIndex {
     pub(crate) k: usize,
-    pub(crate) kmers: DataFrame,
-    pub(crate) names: DataFrame,
-    pub(crate) sequences: DataFrame,
+    pub(crate) kmers: HashMap<u64, Vec<(u32, u32)>>,
+    pub(crate) names: Vec<String>,
+    pub(crate) sequences: Vec<String>,
+    pub(crate) mags: Vec<f64>,
 }
 
 impl FeatureIndex {
@@ -41,13 +46,16 @@ impl FeatureIndex {
         let reader = BufReader::new(reader);
         let mut reader = fasta::io::reader::Builder::default().build_from_reader(reader)?;
 
-        let mut nix_builder = PrimitiveBuilder::<UInt32Type>::new();
-        let mut name_builder = GenericStringBuilder::<i32>::new();
-        let mut sequence_builder = GenericStringBuilder::<i32>::new();
+        let k = options.k;
 
         let mut sequence_number: u32 = 0;
 
         log::info!("reading sequences from '{}'", source);
+
+        let mut names = Vec::new();
+        let mut sequences = Vec::new();
+        let mut mags = Vec::new();
+        let mut kmers: HashMap<u64, Vec<(u32, u32)>> = HashMap::new();
 
         for rec in reader.records() {
             let rec = rec?;
@@ -55,68 +63,23 @@ impl FeatureIndex {
             let name = rec.definition().to_string().split_off(1);
             let sequence = String::from_utf8(rec.sequence().as_ref().to_vec()).unwrap();
 
-            nix_builder.append_value(nix);
-            name_builder.append_value(name);
-            sequence_builder.append_value(sequence);
+            let mut tmp: HashMap<u64, u32> = HashMap::new();
+            for (x, _) in KmerIterator::new(k, sequence.as_bytes().iter()) {
+                *tmp.entry(x.0).or_default() += 1;
+            }
+
+            let mut mag = 0;
+            for (x, count) in tmp.into_iter() {
+                mag += count * count;
+                kmers.entry(x).or_default().push((nix, count));
+            }
+
+            names.push(name);
+            sequences.push(sequence);
+            mags.push((mag as f64).sqrt());
 
             sequence_number += 1;
         }
-
-        log::info!("constructing sequences table.");
-
-        let nix_array = nix_builder.finish();
-        let name_array = name_builder.finish();
-        let sequence_array = sequence_builder.finish();
-
-        let name_schema = Arc::new(Schema::new(vec![
-            Field::new("nix", DataType::UInt32, false),
-            Field::new("name", DataType::Utf8, true),
-            Field::new("sequence", DataType::Utf8, true),
-        ]));
-
-        let recs = RecordBatch::try_new(
-            name_schema,
-            vec![
-                Arc::new(nix_array),
-                Arc::new(name_array),
-                Arc::new(sequence_array),
-            ],
-        )
-        .map_err(|e| Error::new(ErrorKind::Other, e))?;
-
-        let sequences = ctx.read_batch(recs)?;
-
-        log::info!("constructing name/class index");
-
-        let names = sequences.clone().select(vec![
-            col("nix"),
-            regexp_replace(col("name"), lit(&options.pattern), lit(&options.name), None)
-                .alias("name"),
-            regexp_replace(
-                col("name"),
-                lit(&options.pattern),
-                lit(&options.class),
-                None,
-            )
-            .alias("class"),
-        ])?;
-
-        log::info!("constructing k-mer index");
-
-        let kmerize = kmers_fwd();
-        let kmers = sequences
-            .clone()
-            .select(vec![
-                col("nix"),
-                kmerize
-                    .call(vec![lit(options.k as u32), col("sequence")])
-                    .alias("kmer"),
-            ])?
-            .unnest_columns(&["kmer"])?
-            .aggregate(
-                vec![col("nix"), col("kmer")],
-                vec![count(lit(1)).alias("count")],
-            )?;
 
         log::info!("index construction complete");
 
@@ -125,73 +88,168 @@ impl FeatureIndex {
             kmers,
             names,
             sequences,
+            mags,
         })
     }
 
     pub async fn save(&self, out: &str) -> std::io::Result<()> {
         log::info!("saving sequences table.");
-        let opts = DataFrameWriteOptions::default();
-        self.sequences
-            .clone()
-            .sort_by(vec![col("nix")])?
-            .write_parquet(&format!("{}-sidx.parquet", out), opts, None)
-            .await?;
 
-        log::info!("saving names table.");
-        let opts = DataFrameWriteOptions::default();
-        self.names
-            .clone()
-            .sort_by(vec![col("nix")])?
-            .write_parquet(&format!("{}-nidx.parquet", out), opts, None)
-            .await?;
+        let mut name_builder = GenericStringBuilder::<i32>::new();
+        for name in self.names.iter() {
+            name_builder.append_value(name);
+        }
+        let name_array = name_builder.finish();
+
+        let mut sequence_builder = GenericStringBuilder::<i32>::new();
+        for sequence in self.sequences.iter() {
+            sequence_builder.append_value(sequence);
+        }
+        let sequence_array = sequence_builder.finish();
+
+        let mut mags_builder = PrimitiveBuilder::<Float64Type>::new();
+        for mag in self.mags.iter() {
+            mags_builder.append_value(*mag);
+        }
+        let mags_array = mags_builder.finish();
+
+        let name_schema = Arc::new(Schema::new(vec![
+            Field::new("name", DataType::Utf8, false),
+            Field::new("sequence", DataType::Utf8, false),
+            Field::new("mags", DataType::Float64, false),
+        ]));
+
+        let recs = RecordBatch::try_new(
+            name_schema,
+            vec![
+                Arc::new(name_array),
+                Arc::new(sequence_array),
+                Arc::new(mags_array),
+            ],
+        )
+        .map_err(|e| Error::new(ErrorKind::Other, e))?;
+
+        save_record_batch(&recs, &format!("{}-names.parquet", out))?;
 
         log::info!("saving kmers table.");
-        let opts = DataFrameWriteOptions::default();
-        let mut kidx_opts = TableParquetOptions::default();
-        let mut kmer_opts = ParquetColumnOptions::default();
-        kmer_opts.compression = Some(String::from("zstd(19)"));
-        kidx_opts
-            .column_specific_options
-            .insert(String::from("kmer"), kmer_opts);
-        kidx_opts
-            .key_value_metadata
-            .insert(String::from("k"), Some(self.k.to_string()));
-        self.kmers
-            .clone()
-            .sort_by(vec![col("kmer"), col("nix")])?
-            .write_parquet(&format!("{}-kidx.parquet", out), opts, Some(kidx_opts))
-            .await?;
+
+        let mut kmers_builder = PrimitiveBuilder::<UInt64Type>::new();
+        let mut nixs_builder = PrimitiveBuilder::<UInt32Type>::new();
+        let mut counts_builder = PrimitiveBuilder::<UInt32Type>::new();
+
+        for (x, hits) in self.kmers.iter() {
+            for (nix, count) in hits.iter() {
+                kmers_builder.append_value(*x);
+                nixs_builder.append_value(*nix);
+                counts_builder.append_value(*count);
+            }
+        }
+
+        let kmers_array = kmers_builder.finish();
+        let nixs_array = nixs_builder.finish();
+        let counts_array = counts_builder.finish();
+
+        let kmers_meta: HashMap<String, String> = vec![(String::from("k"), format!("{}", self.k))]
+            .into_iter()
+            .collect();
+        let kmers_schema = Arc::new(Schema::new_with_metadata(
+            vec![
+                Field::new("kmer", DataType::UInt64, false),
+                Field::new("nix", DataType::UInt32, false),
+                Field::new("count", DataType::UInt32, false),
+            ],
+            kmers_meta,
+        ));
+
+        let recs = RecordBatch::try_new(
+            kmers_schema,
+            vec![
+                Arc::new(kmers_array),
+                Arc::new(nixs_array),
+                Arc::new(counts_array),
+            ],
+        )
+        .map_err(|e| Error::new(ErrorKind::Other, e))?;
+
+        save_record_batch(&recs, &format!("{}-kmers.parquet", out))?;
 
         Ok(())
     }
 
     pub async fn load(features: &str, ctx: &SessionContext) -> std::io::Result<FeatureIndex> {
         log::info!("loading index '{}'", features);
-        let opts = ParquetReadOptions::default().skip_metadata(false);
-        let kmers = ctx
-            .read_parquet(&format!("{}-kidx.parquet", features), opts.clone())
-            .await?;
-        let meta = kmers.schema().metadata();
-        let k: usize = if let Some(k_str) = meta.get("k") {
-            if let Ok(k) = k_str.parse() {
-                k
-            } else {
-                return Err(as_io_error(SveltError::MissingK(String::from(features))));
+
+        let mut names: Vec<String> = Vec::new();
+        let mut sequences: Vec<String> = Vec::new();
+        let mut mags: Vec<f64> = Vec::new();
+        let mut kmers: HashMap<u64, Vec<(u32, u32)>> = HashMap::new();
+        let mut k: usize = 0;
+
+        let reader = File::open(&format!("{}-names.parquet", features))?;
+        let mut reader = ParquetRecordBatchReaderBuilder::try_new(reader)?.build()?;
+        for recs in reader {
+            let recs = recs.map_err(|e| wrap_file_error(e, features))?;
+            let name_col = recs
+                .column(0)
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .unwrap();
+            let sequence_col = recs
+                .column(1)
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .unwrap();
+                let mags_col = recs
+                .column(1)
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .unwrap();
+            for (name, (sequence, mag)) in zip(name_col, zip(sequence_col, mags_col)) {
+                let name = name.unwrap();
+                let sequence = sequence.unwrap();
+                let mag = mag.unwrap();
+                names.push(name.to_string());
+                sequences.push(sequence.to_string());
+                mags.push(mag);
             }
-        } else {
-            return Err(as_io_error(SveltError::MissingK(String::from(features))));
-        };
+        }
 
-        let names = ctx
-            .read_parquet(&format!("{}-nidx.parquet", features), opts.clone())
-            .await?;
-        let names = names
-            .with_column_renamed("name", "idx_name")?
-            .with_column_renamed("nix", "idx_nix")?;
+        let reader = File::open(&format!("{}-kmers.parquet", features))?;
+        let mut reader = ParquetRecordBatchReaderBuilder::try_new(reader)?.build()?;
+        for recs in reader {
+            let recs = recs.map_err(|e| wrap_file_error(e, features))?;
+            if k == 0 {
+                let k_str = recs
+                    .schema()
+                    .metadata()
+                    .get("k")
+                    .map(|s| s.to_string())
+                    .unwrap();
+                k = k_str.parse().unwrap();
+            }
+            let kmer_col = recs
+                .column(0)
+                .as_any()
+                .downcast_ref::<UInt64Array>()
+                .unwrap();
+            let nix_col = recs
+                .column(1)
+                .as_any()
+                .downcast_ref::<UInt32Array>()
+                .unwrap();
+            let count_col = recs
+                .column(2)
+                .as_any()
+                .downcast_ref::<UInt32Array>()
+                .unwrap();
 
-        let sequences = ctx
-            .read_parquet(&format!("{}-sidx.parquet", features), opts)
-            .await?;
+            for (kmer, (nix, count)) in zip(kmer_col, zip(nix_col, count_col)) {
+                let kmer = kmer.unwrap();
+                let nix = nix.unwrap();
+                let count = count.unwrap();
+                kmers.entry(kmer).or_default().push((nix, count));
+            }
+        }
 
         log::info!("loading index done.");
 
@@ -200,6 +258,7 @@ impl FeatureIndex {
             kmers,
             names,
             sequences,
+            mags
         })
     }
 
@@ -207,59 +266,38 @@ impl FeatureIndex {
         self.k
     }
 
-    pub async fn rank(&self, query: DataFrame) -> std::io::Result<DataFrame> {
-        let query = query.with_column("name", lit("query"))?;
+    pub async fn rank(&self, query: &str) -> std::io::Result<()> {
+        let mut fwd: HashMap<u64, u32> = HashMap::new();
+        let mut rev: HashMap<u64, u32> = HashMap::new();
 
-        let subject = self.kmers.clone().with_column_renamed("nix", "name")?;
+        for (x, y) in KmerIterator::new(self.k, query.as_bytes().iter()) {
+            *fwd.entry(x.0).or_default() += 1;
+            *rev.entry(y.0).or_default() += 1;
+        }
 
-        let res = distance(query, subject, DistanceMetric::Cosine).await?;
-        let res = res
-            .join(
-                self.names.clone(),
-                JoinType::Left,
-                &["subject_name"],
-                &["idx_nix"],
-                None,
-            )?
-            .drop_columns(&["subject_name", "idx_nix"])?
-            .with_column_renamed("idx_name", "subject_name")?;
+        let mut q_mag = 0;
+        let mut d_fwd: HashMap<u32, u32> = HashMap::new();
+        for (x, q) in fwd.iter() {
+            q_mag += *q * *q;
+            if let Some(items) = self.kmers.get(x) {
+                for (nix, s) in items.iter() {
+                    *d_fwd.entry(*nix).or_default() += *q * *s;
+                }
+            }
+        }
 
-        Ok(res)
+        Ok(())
     }
 
     pub async fn rank_many(&self, queries: DataFrame) -> std::io::Result<DataFrame> {
-        let subject = self.kmers.clone().with_column_renamed("nix", "name")?;
-
-        let res = distance(queries, subject, DistanceMetric::Cosine).await?;
-        let res = res
-            .join(
-                self.names.clone(),
-                JoinType::Left,
-                &["subject_name"],
-                &["idx_nix"],
-                None,
-            )?
-            .drop_columns(&["subject_name", "idx_nix"])?
-            .with_column_renamed("idx_name", "subject_name")?;
-        Ok(res)
+        todo!()
     }
+}
 
-    pub async fn score_alignments(&self, queries: DataFrame) -> std::io::Result<DataFrame> {
-        let align = align();
-
-        let rhs = self.sequences.clone().select(vec![
-            col("nix").alias("rhs_nix"),
-            col("sequence").alias("rhs_sequence"),
-        ])?;
-
-        let tbl = queries
-            .join(rhs, JoinType::Inner, &["nix"], &["rhs_nix"], None)?
-            .with_column(
-                "score",
-                align.call(vec![col("sequence"), col("rhs_sequence")]),
-            )?
-            .drop_columns(&["rhs_nix", "rhs_sequence"])?;
-
-        Ok(tbl)
-    }
+fn save_record_batch(recs: &RecordBatch, path: &str) -> std::io::Result<()> {
+    let writer = autocompress::autodetect_create_or_stdout(Some(path), CompressionLevel::best())?;
+    let mut writer = ArrowWriter::try_new(writer, recs.schema(), None)?;
+    writer.write(recs)?;
+    writer.close();
+    Ok(())
 }
