@@ -18,7 +18,7 @@ pub(crate) async fn find_classifications(
         return Ok(None);
     }
 
-    let idx = FeatureIndex::load(features, &ctx).await?;
+    let idx = FeatureIndex::load(features, ctx).await?;
 
     let k = idx.k();
 

@@ -5,7 +5,7 @@ use svelt::{
     features::FeatureIndex,
     homology::find_similar,
     merge::merge_vcfs,
-    options::{CommonOptions, IndexingOptions, MergeOptions, QueryOptions, make_session_context},
+    options::{make_session_context, CommonOptions, IndexingOptions, MergeOptions, QueryOptions},
 };
 
 /// Structuaral Variant (SV) VCF merging
@@ -94,17 +94,17 @@ async fn main_inner() -> std::io::Result<()> {
             common,
         } => {
             let ctx = make_session_context(&common);
-
-            let idx = FeatureIndex::build(&features, &options, &ctx).await?;
-            idx.save(&out).await?;
+            let idx = FeatureIndex::build(&features, &options).await?;
+            idx.save(&out, &ctx).await?;
         }
         Commands::FindSimilar {
             features,
             query,
-            k,
+            k: _,
             common,
         } => {
-            find_similar(&features, &query, k, &common).await?;
+            let ctx = make_session_context(&common);
+            find_similar(&features, &query, &common, &ctx).await?;
         }
     }
 

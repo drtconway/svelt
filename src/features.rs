@@ -1,32 +1,26 @@
 use std::{
     collections::HashMap,
-    fmt::format,
-    fs::File,
     io::{BufReader, Error, ErrorKind},
     iter::zip,
     sync::Arc,
 };
 
-use autocompress::{CompressionLevel, autodetect_open};
+use autocompress::autodetect_open;
 use datafusion::{
     arrow::{
         array::{
-            Float64Array, GenericStringBuilder, PrimitiveBuilder, RecordBatch, StringArray, UInt32Array, UInt64Array
+            Float64Array, GenericStringBuilder, PrimitiveBuilder, RecordBatch, StringViewArray,
+            UInt32Array, UInt64Array,
         },
         datatypes::{DataType, Field, Float64Type, Schema, UInt32Type, UInt64Type},
     },
-    common::JoinType,
-    parquet::arrow::{arrow_reader::ParquetRecordBatchReaderBuilder, ArrowWriter},
-    prelude::{col, lit, DataFrame, ParquetReadOptions, SessionContext},
+    config::TableParquetOptions,
+    dataframe::DataFrameWriteOptions,
+    prelude::{DataFrame, ParquetReadOptions, SessionContext},
 };
 use noodles::fasta;
 
-use crate::{
-    distance::{DistanceMetric, distance, needleman_wunsch::align},
-    errors::{SveltError, as_io_error, wrap_file_error},
-    kmers::{KmerIterator, kmerize::kmers_fwd},
-    options::IndexingOptions,
-};
+use crate::{errors::wrap_file_error, kmers::KmerIterator, options::IndexingOptions};
 
 pub struct FeatureIndex {
     pub(crate) k: usize,
@@ -37,11 +31,7 @@ pub struct FeatureIndex {
 }
 
 impl FeatureIndex {
-    pub async fn build(
-        source: &str,
-        options: &IndexingOptions,
-        ctx: &SessionContext,
-    ) -> std::io::Result<FeatureIndex> {
+    pub async fn build(source: &str, options: &IndexingOptions) -> std::io::Result<FeatureIndex> {
         let reader = autodetect_open(source).map_err(|e| wrap_file_error(e, source))?;
         let reader = BufReader::new(reader);
         let mut reader = fasta::io::reader::Builder::default().build_from_reader(reader)?;
@@ -92,7 +82,7 @@ impl FeatureIndex {
         })
     }
 
-    pub async fn save(&self, out: &str) -> std::io::Result<()> {
+    pub async fn save(&self, out: &str, ctx: &SessionContext) -> std::io::Result<()> {
         log::info!("saving sequences table.");
 
         let mut name_builder = GenericStringBuilder::<i32>::new();
@@ -129,7 +119,7 @@ impl FeatureIndex {
         )
         .map_err(|e| Error::new(ErrorKind::Other, e))?;
 
-        save_record_batch(&recs, &format!("{}-names.parquet", out))?;
+        save_record_batch(recs, &format!("{}-names.parquet", out), ctx, vec![]).await?;
 
         log::info!("saving kmers table.");
 
@@ -152,6 +142,7 @@ impl FeatureIndex {
         let kmers_meta: HashMap<String, String> = vec![(String::from("k"), format!("{}", self.k))]
             .into_iter()
             .collect();
+        log::info!("saving meta: {:?}", kmers_meta);
         let kmers_schema = Arc::new(Schema::new_with_metadata(
             vec![
                 Field::new("kmer", DataType::UInt64, false),
@@ -171,7 +162,13 @@ impl FeatureIndex {
         )
         .map_err(|e| Error::new(ErrorKind::Other, e))?;
 
-        save_record_batch(&recs, &format!("{}-kmers.parquet", out))?;
+        save_record_batch(
+            recs,
+            &format!("{}-kmers.parquet", out),
+            ctx,
+            vec![(String::from("k"), Some(self.k.to_string()))],
+        )
+        .await?;
 
         Ok(())
     }
@@ -185,22 +182,25 @@ impl FeatureIndex {
         let mut kmers: HashMap<u64, Vec<(u32, u32)>> = HashMap::new();
         let mut k: usize = 0;
 
-        let reader = File::open(&format!("{}-names.parquet", features))?;
-        let mut reader = ParquetRecordBatchReaderBuilder::try_new(reader)?.build()?;
-        for recs in reader {
-            let recs = recs.map_err(|e| wrap_file_error(e, features))?;
+        let options = ParquetReadOptions::default().skip_metadata(false);
+        let df = ctx
+            .read_parquet(&format!("{}-names.parquet", features), options)
+            .await?;
+        let batches = df.collect().await?;
+
+        for recs in batches {
             let name_col = recs
                 .column(0)
                 .as_any()
-                .downcast_ref::<StringArray>()
+                .downcast_ref::<StringViewArray>()
                 .unwrap();
             let sequence_col = recs
                 .column(1)
                 .as_any()
-                .downcast_ref::<StringArray>()
+                .downcast_ref::<StringViewArray>()
                 .unwrap();
-                let mags_col = recs
-                .column(1)
+            let mags_col = recs
+                .column(2)
                 .as_any()
                 .downcast_ref::<Float64Array>()
                 .unwrap();
@@ -214,10 +214,13 @@ impl FeatureIndex {
             }
         }
 
-        let reader = File::open(&format!("{}-kmers.parquet", features))?;
-        let mut reader = ParquetRecordBatchReaderBuilder::try_new(reader)?.build()?;
-        for recs in reader {
-            let recs = recs.map_err(|e| wrap_file_error(e, features))?;
+        let options = ParquetReadOptions::default().skip_metadata(false);
+        let df = ctx
+            .read_parquet(&format!("{}-kmers.parquet", features), options)
+            .await?;
+        let batches = df.collect().await?;
+
+        for recs in batches {
             if k == 0 {
                 let k_str = recs
                     .schema()
@@ -258,7 +261,7 @@ impl FeatureIndex {
             kmers,
             names,
             sequences,
-            mags
+            mags,
         })
     }
 
@@ -266,7 +269,7 @@ impl FeatureIndex {
         self.k
     }
 
-    pub async fn rank(&self, query: &str) -> std::io::Result<()> {
+    pub fn rank(&self, query: &str) -> std::io::Result<(Vec<(u32, f64)>, Vec<(u32, f64)>)> {
         let mut fwd: HashMap<u64, u32> = HashMap::new();
         let mut rev: HashMap<u64, u32> = HashMap::new();
 
@@ -285,8 +288,33 @@ impl FeatureIndex {
                 }
             }
         }
+        let q_mag = (q_mag as f64).sqrt();
 
-        Ok(())
+        let mut fwd_res: Vec<(u32, f64)> = d_fwd
+            .into_iter()
+            .map(|(nix, sum)| (nix, (sum as f64) / (q_mag * self.mags[nix as usize])))
+            .collect();
+        fwd_res.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
+
+        let mut q_mag = 0;
+        let mut d_rev: HashMap<u32, u32> = HashMap::new();
+        for (x, q) in rev.iter() {
+            q_mag += *q * *q;
+            if let Some(items) = self.kmers.get(x) {
+                for (nix, s) in items.iter() {
+                    *d_rev.entry(*nix).or_default() += *q * *s;
+                }
+            }
+        }
+        let q_mag = (q_mag as f64).sqrt();
+
+        let mut rev_res: Vec<(u32, f64)> = d_rev
+            .into_iter()
+            .map(|(nix, sum)| (nix, (sum as f64) / (q_mag * self.mags[nix as usize])))
+            .collect();
+        rev_res.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
+
+        Ok((fwd_res, rev_res))
     }
 
     pub async fn rank_many(&self, queries: DataFrame) -> std::io::Result<DataFrame> {
@@ -294,10 +322,18 @@ impl FeatureIndex {
     }
 }
 
-fn save_record_batch(recs: &RecordBatch, path: &str) -> std::io::Result<()> {
-    let writer = autocompress::autodetect_create_or_stdout(Some(path), CompressionLevel::best())?;
-    let mut writer = ArrowWriter::try_new(writer, recs.schema(), None)?;
-    writer.write(recs)?;
-    writer.close();
+async fn save_record_batch(
+    recs: RecordBatch,
+    path: &str,
+    ctx: &SessionContext,
+    meta: Vec<(String, Option<String>)>,
+) -> std::io::Result<()> {
+    let df = ctx.read_batch(recs)?;
+    let mut options = TableParquetOptions::default();
+    for (k, v) in meta {
+        options.key_value_metadata.insert(k, v);
+    }
+    df.write_parquet(path, DataFrameWriteOptions::default(), Some(options))
+        .await?;
     Ok(())
 }
