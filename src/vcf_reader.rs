@@ -23,7 +23,9 @@ impl VcfReader {
         let mut reader: vcf::io::Reader<Box<dyn BufRead>> = vcf::io::reader::Builder::default()
             .build_from_reader(reader)
             .map_err(|e| wrap_file_error(e, &path))?;
-        let header = reader.read_header().unwrap();
+        let header = reader
+            .read_header()
+            .map_err(|e| wrap_file_error(e, &path))?;
         check_chroms(&header, chroms.as_ref()).map_err(as_io_error)?;
 
         Ok(VcfReader {
@@ -39,7 +41,7 @@ impl VcfReader {
         let reader = autocompress::autodetect_open(&self.path)?;
         let mut reader: vcf::io::Reader<Box<dyn BufRead>> =
             vcf::io::reader::Builder::default().build_from_reader(reader)?;
-        let _header = reader.read_header()?;
+        let _header = reader.read_header().map_err(|e| wrap_file_error(e, &self.path));
         self.reader = reader;
         Ok(())
     }

@@ -116,5 +116,6 @@ pub fn wrap_file_error<E: std::error::Error + Send + Sync + 'static>(
     e: E,
     filename: &str,
 ) -> std::io::Error {
+    eprintln!("error in {}: {:?}", filename, e);
     as_io_error(SveltError::FileError(String::from(filename), Box::new(e)))
 }

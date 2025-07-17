@@ -1,7 +1,7 @@
 use super::SequenceIterator;
 
 use crate::{
-    errors::{SveltError, as_io_error},
+    errors::{as_io_error, wrap_file_error, SveltError},
     tables::is_seq,
 };
 use autocompress::autodetect_open;
@@ -25,7 +25,7 @@ impl VcfSequenceIterator {
         let reader = autodetect_open(&filename)?;
         let mut reader: noodles::vcf::io::Reader<Box<dyn BufRead>> =
             noodles::vcf::io::reader::Builder::default().build_from_reader(reader)?;
-        let header = reader.read_header()?;
+        let header = reader.read_header().map_err(|e| wrap_file_error(e, &filename))?;
         Ok(VcfSequenceIterator { reader, header })
     }
 

@@ -361,7 +361,7 @@ fn load_chroms(path: &str) -> std::io::Result<ChromSet> {
     let reader = autocompress::autodetect_open(path).map_err(|e| wrap_file_error(e, path))?;
     let mut reader: vcf::io::Reader<Box<dyn BufRead>> =
         vcf::io::reader::Builder::default().build_from_reader(reader)?;
-    let header: Header = reader.read_header()?;
+    let header: Header = reader.read_header().map_err(|e| wrap_file_error(e, path))?;
 
     let mut names: Vec<&str> = Vec::new();
     for contig in header.contigs() {

@@ -15,7 +15,7 @@ use noodles::vcf::{
 
 use crate::{
     chroms::ChromSet,
-    errors::{SveltError, as_io_error},
+    errors::{as_io_error, wrap_file_error, SveltError},
     inputs::{get_breakend, get_svtype},
     vcf_reader::VcfReader,
 };
@@ -58,7 +58,7 @@ pub fn load_vcf_core(reader: &mut VcfReader) -> std::io::Result<RecordBatch> {
 
     for (rn, rec) in reader.reader.records().enumerate() {
         log::debug!("processing record {}", rn);
-        let rec = rec?;
+        let rec = rec.map_err(|e| wrap_file_error(e, &reader.path))?;
 
         let chrom_id = chroms.index(rec.reference_sequence_name()).unwrap();
         let chrom = String::from(rec.reference_sequence_name());
