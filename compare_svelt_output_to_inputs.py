@@ -40,7 +40,7 @@ def compare_ids(sample_to_ids, all_input_ids, svelt_ids):
     unexpected = svelt_ids - all_input_ids
     if unexpected:
         raise ValueError(
-            f"Found {len(unexpected)} ORIGINAL_IDS in SVelt output not present in any input.\n"
+            f"Found {len(unexpected)} ORIGINAL_IDS in Svelt output not present in any input.\n"
             f"Example unexpected IDs: {list(unexpected)[:10]}"
         )
 
@@ -49,8 +49,8 @@ def compare_ids(sample_to_ids, all_input_ids, svelt_ids):
         missing = ids - svelt_ids
         print(f"\nSample: {sample}")
         print(f" - Total input IDs: {len(ids)}")
-        print(f" - Matched in SVelt output: {len(matched)}")
-        print(f" - Missing from SVelt output: {len(missing)}")
+        print(f" - Matched in Svelt output: {len(matched)}")
+        print(f" - Missing from Svelt output: {len(missing)}")
         if missing:
             print(f"Example missing IDs: {list(missing)[:10]}")
 
@@ -63,10 +63,10 @@ def main():
     print("Extracting input IDs...")
     sample_to_ids, all_input_ids = extract_input_ids(args.inputs)
 
-    print("Extracting ORIGINAL_IDS from SVelt VCF...")
+    print("Extracting ORIGINAL_IDS from Svelt VCF...")
     svelt_ids = extract_svelt_ids(args.svelt)
 
-    print("\nComparing input IDs to SVelt output...")
+    print("\nComparing input IDs to Svelt output...")
     compare_ids(sample_to_ids, all_input_ids, svelt_ids)
 
 if __name__ == "__main__":
