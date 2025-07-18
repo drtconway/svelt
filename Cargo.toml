@@ -9,7 +9,7 @@ repository = "https://github.com/drtconway/svelt"
 name = "svelt"
 
 [profile.release]
-debug = true
+debug = false
 
 [dependencies]
 autocompress = "0.6.0"
