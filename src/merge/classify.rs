@@ -20,6 +20,8 @@ pub(crate) async fn find_classifications(
     features: &str,
     ctx: &SessionContext,
 ) -> std::io::Result<DataFrame> {
+    use rayon::prelude::*;
+
     let n: usize = batch.iter().map(|recs| recs.num_rows()).sum();
     log::info!("number of sequences to classify: {}", n);
 
@@ -29,19 +31,33 @@ pub(crate) async fn find_classifications(
 
     let now = Instant::now();
 
-    let itr = batch.iter().flat_map(|recs| MergeIterator::new(recs));
+    let results: Vec<Vec<Option<(String, String, String, f64)>>> = batch
+        .par_iter()
+        .map(|recs| {
+            let itr = MergeIterator::new(recs);
+            let inner: Vec<Option<(String, String, String, f64)>> = itr
+                .map(|(seq_hash, sequence)| {
+                    find_best_classification(sequence, &idx)
+                        .map(|(class, strand, score)| (seq_hash.to_string(), class, strand, score))
+                })
+                .collect();
+            inner
+        })
+        .collect();
 
     let mut seq_hash_builder = GenericStringBuilder::<i32>::new();
     let mut class_builder = GenericStringBuilder::<i32>::new();
     let mut strand_builder = GenericStringBuilder::<i32>::new();
     let mut distance_builder = PrimitiveBuilder::<Float64Type>::new();
 
-    for (seq_hash, sequence) in itr {
-        if let Some((class, strand, score)) = find_best_classification(sequence, &idx) {
-            seq_hash_builder.append_value(seq_hash);
-            class_builder.append_value(class);
-            strand_builder.append_value(strand);
-            distance_builder.append_value(score);
+    for block in results {
+        for item in block {
+            if let Some((seq_hash, class, strand, score)) = item {
+                seq_hash_builder.append_value(seq_hash);
+                class_builder.append_value(class);
+                strand_builder.append_value(strand);
+                distance_builder.append_value(score);
+            }
         }
     }
 
