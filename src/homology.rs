@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{cmp::Ordering, collections::BTreeMap};
 
 use datafusion::prelude::SessionContext;
 
@@ -38,15 +38,7 @@ fn find_similar_inner<Itr: SequenceIterator>(itr: Itr, idx: &FeatureIndex) -> st
     for rec in itr {
         let (name, sequence) = rec?;
 
-        let (fwd, rev) = idx.rank(&sequence)?;
-
-        let mut res = BTreeMap::new();
-        for (nix, score) in fwd {
-            res.entry(nix).or_insert_with(|| (0.0, 0.0)).0 = score;
-        }
-        for (nix, score) in rev {
-            res.entry(nix).or_insert_with(|| (0.0, 0.0)).1 = score;
-        }
+        let res = find_similar_compile_results(&sequence, idx)?;
 
         for (nix, (fwd, rev)) in res {
             println!("{}\t{}\t{}\t{}", name, idx.names[nix as usize], fwd, rev);
@@ -59,19 +51,44 @@ fn find_similar_inner<Itr: SequenceIterator>(itr: Itr, idx: &FeatureIndex) -> st
 async fn find_similar_single(features: &str, query: &str, ctx: &SessionContext) -> std::io::Result<()> {
     let idx = FeatureIndex::load(features, ctx).await?;
 
-    let (fwd, rev) = idx.rank(query)?;
-
-    let mut res = BTreeMap::new();
-    for (nix, score) in fwd {
-        res.entry(nix).or_insert_with(|| (0.0, 0.0)).0 = score;
-    }
-    for (nix, score) in rev {
-        res.entry(nix).or_insert_with(|| (0.0, 0.0)).1 = score;
-    }
+    let res = find_similar_compile_results(query, &idx)?;
 
     for (nix, (fwd, rev)) in res {
         println!("{}\t{}\t{}", idx.names[nix as usize], fwd, rev);
     }
 
     Ok(())
+}
+
+fn find_similar_compile_results(sequence: &str, idx: &FeatureIndex) -> std::io::Result<Vec<(u32, (f64, f64))>> {
+    let (fwd, rev) = idx.rank(sequence)?;
+
+    let mut res = BTreeMap::new();
+    for (nix, score) in fwd {
+        if score < 0.5 {
+            continue;
+        }
+        res.entry(nix).or_insert_with(|| (0.0, 0.0)).0 = score;
+    }
+    for (nix, score) in rev {
+        if score < 0.5 {
+            continue;
+        }
+        res.entry(nix).or_insert_with(|| (0.0, 0.0)).1 = score;
+    }
+
+    let mut res: Vec<(u32, (f64, f64))> = res.into_iter().collect();
+    res.sort_by( |lhs, rhs| cmp_items(rhs, lhs));
+
+    Ok(res)
+}
+
+fn cmp_items(lhs: &(u32, (f64, f64)), rhs: &(u32, (f64, f64))) -> Ordering {
+    let lhs_max = if lhs.1.0 > lhs.1.1 { lhs.1.0 } else { lhs.1.1 };
+    let rhs_max = if rhs.1.0 > rhs.1.1 { rhs.1.0 } else { rhs.1.1 };
+    if let Some(res) = lhs_max.partial_cmp(&rhs_max) {
+        res
+    } else {
+        lhs.0.cmp(&rhs.0)
+    }
 }
