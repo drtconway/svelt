@@ -269,7 +269,7 @@ impl FeatureIndex {
         self.k
     }
 
-    pub fn rank(&self, query: &str) -> std::io::Result<(Vec<(u32, f64)>, Vec<(u32, f64)>)> {
+    pub fn rank(&self, query: &str) -> (Vec<(u32, f64)>, Vec<(u32, f64)>) {
         let mut fwd: HashMap<u64, u32> = HashMap::new();
         let mut rev: HashMap<u64, u32> = HashMap::new();
 
@@ -314,7 +314,7 @@ impl FeatureIndex {
             .collect();
         rev_res.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
 
-        Ok((fwd_res, rev_res))
+        (fwd_res, rev_res)
     }
 }
 
