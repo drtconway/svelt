@@ -6,7 +6,7 @@ use std::{
 use datafusion::{
     arrow::{
         array::{
-            Array, BooleanArray, GenericStringArray, Int64Array, RecordBatch, StringViewArray,
+            Array, BooleanArray, GenericStringArray, Int64Array, RecordBatch, StringArray,
             UInt32Array,
         },
         datatypes::DataType,
@@ -151,36 +151,26 @@ pub async fn merge_vcfs(
 
         let ins = ins.collect().await?;
         let classifications = classify::find_classifications(ins, features, &ctx).await?;
-        if let Some(classifications) = classifications {
-            let classifications = classifications.filter(col("distance").lt(lit(0.5)))?;
-
-            if false {
-                classifications
-                    .clone()
-                    .sort_by(vec![col("distance")])?
-                    .show()
-                    .await?;
-            }
-
-            results = results
-                .join(
-                    classifications,
-                    JoinType::Left,
-                    &["seq_hash"],
-                    &["query_name"],
-                    None,
-                )?
-                .drop_columns(&["query_name"])?
-                .with_column("feature", concat(vec![lit(""), col("feature")]))?
-                .with_column("class", concat(vec![lit(""), col("class")]))?
-                .with_column("strand", concat(vec![lit(""), col("strand")]))?;
-            annot = true;
-        } else {
-            log::warn!(
-                "insertion sequence classifications requested, but none found in {}.",
-                features
-            );
+        if true {
+            classifications
+                .clone()
+                .sort_by(vec![col("distance")])?
+                .show()
+                .await?;
         }
+
+        results = results
+            .join(
+                classifications,
+                JoinType::Left,
+                &["seq_hash"],
+                &["query_name"],
+                None,
+            )?
+            .drop_columns(&["query_name"])?
+            .with_column("class", concat(vec![lit(""), col("class")]))?
+            .with_column("strand", concat(vec![lit(""), col("strand")]))?;
+        annot = true;
     }
 
     results = construct_variant_ids(results, &ctx).await?;
@@ -245,10 +235,9 @@ pub async fn merge_vcfs(
         let paired_bnds = get_array::<BooleanArray>(&recs, "paired_bnd");
         let criteria = get_array::<GenericStringArray<i32>>(&recs, "criteria");
         let classifications = if annot {
-            let feature = get_array::<StringViewArray>(&recs, "feature");
-            let class = get_array::<StringViewArray>(&recs, "class");
-            let strand = get_array::<StringViewArray>(&recs, "strand");
-            Some((feature, class, strand))
+            let class = get_array::<StringArray>(&recs, "class");
+            let strand = get_array::<StringArray>(&recs, "strand");
+            Some((class, strand))
         } else {
             None
         };
@@ -270,8 +259,8 @@ pub async fn merge_vcfs(
                     }
                 }
                 if !is_empty {
-                    let feat = if let Some((feature, class, strand)) = &current_row_classification {
-                        format!("{}/{}{}", class, feature, strand)
+                    let feat = if let Some((class, strand)) = &current_row_classification {
+                        format!("{}{}", class, strand)
                     } else {
                         String::new()
                     };
@@ -314,14 +303,11 @@ pub async fn merge_vcfs(
                 current_row_criteria = String::from(crit);
             }
 
-            if let Some((feature, class, strand)) = &classifications {
-                let feat = feature.value(i);
-                if feat.len() > 0 {
-                    current_row_classification = Some((
-                        String::from(feature.value(i)),
-                        String::from(class.value(i)),
-                        String::from(strand.value(i)),
-                    ));
+            if let Some((class, strand)) = &classifications {
+                let cls = class.value(i);
+                if cls.len() > 0 {
+                    current_row_classification =
+                        Some((String::from(class.value(i)), String::from(strand.value(i))));
                 }
             }
         }
@@ -337,8 +323,8 @@ pub async fn merge_vcfs(
         }
     }
     if !is_empty {
-        let feat = if let Some((feature, class, strand)) = &current_row_classification {
-            format!("{}/{}{}", class, feature, strand)
+        let feat = if let Some((class, strand)) = &current_row_classification {
+            format!("{}{}", class, strand)
         } else {
             String::new()
         };

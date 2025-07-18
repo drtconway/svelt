@@ -16,7 +16,7 @@ use datafusion::{
     },
     config::TableParquetOptions,
     dataframe::DataFrameWriteOptions,
-    prelude::{DataFrame, ParquetReadOptions, SessionContext},
+    prelude::{ParquetReadOptions, SessionContext},
 };
 use noodles::fasta;
 
@@ -315,10 +315,6 @@ impl FeatureIndex {
         rev_res.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
 
         Ok((fwd_res, rev_res))
-    }
-
-    pub async fn rank_many(&self, queries: DataFrame) -> std::io::Result<DataFrame> {
-        todo!()
     }
 }
 

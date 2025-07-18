@@ -1,159 +1,100 @@
 use crate::features::FeatureIndex;
-use crate::kmers_table::kmers_table;
 use datafusion::{
-    arrow::array::{Array as _, GenericStringArray, RecordBatch},
-    functions_aggregate::{expr_fn::first_value, min_max::min},
-    prelude::{DataFrame, SessionContext, col, concat, lit, substr, substring},
+    arrow::{
+        array::{
+            Array as _, GenericStringArray, GenericStringBuilder, PrimitiveBuilder, RecordBatch,
+        },
+        datatypes::{DataType, Field, Float64Type, Schema},
+    },
+    prelude::{DataFrame, SessionContext},
 };
-use std::time::Instant;
+use std::{
+    io::{Error, ErrorKind}, sync::Arc, time::Instant, u32
+};
 
 pub(crate) async fn find_classifications(
     batch: Vec<RecordBatch>,
     features: &str,
     ctx: &SessionContext,
-) -> std::io::Result<Option<DataFrame>> {
+) -> std::io::Result<DataFrame> {
     let n: usize = batch.iter().map(|recs| recs.num_rows()).sum();
     log::info!("number of sequences to classify: {}", n);
-    if n == 0 {
-        return Ok(None);
-    }
 
     let idx = FeatureIndex::load(features, ctx).await?;
 
-    let k = idx.k();
-
     log::info!("classifying insertion sequences with '{}'", features);
+
     let now = Instant::now();
-    let mut last = Instant::now();
 
     let itr = batch.iter().flat_map(|recs| MergeIterator::new(recs));
 
-    let mut result: Option<DataFrame> = None;
-    let mut total_ins_sequences: usize = 0;
+    let mut seq_hash_builder = GenericStringBuilder::<i32>::new();
+    let mut class_builder = GenericStringBuilder::<i32>::new();
+    let mut strand_builder = GenericStringBuilder::<i32>::new();
+    let mut distance_builder = PrimitiveBuilder::<Float64Type>::new();
 
-    let mut curr: Option<DataFrame> = None;
-    let mut seq_count: usize = 0;
-    let mut curr_count: usize = 0;
-    for rec in itr {
-        if total_ins_sequences & 0xF == 0xF {
-            if last.elapsed().as_secs_f64() > 10.0 {
-                log::info!(
-                    "classified {} sequences in {}s ({} seq/sec).",
-                    total_ins_sequences,
-                    now.elapsed().as_secs_f32(),
-                    total_ins_sequences as f32 / now.elapsed().as_secs_f32(),
-                );
-                last = Instant::now();
+    for (seq_hash, sequence) in itr {
+        let (fwd, rev) = idx.rank(sequence)?;
+        let mut best_nix = u32::MAX;
+        let mut best_score = -1.0;
+        let mut best_strand = true;
+        for (nix, score) in fwd {
+            if score > best_score {
+                best_nix = nix;
+                best_score = score;
+                best_strand = true;
             }
         }
-        total_ins_sequences += 1;
-        seq_count += 1;
-        let (name, sequence) = rec;
-        if sequence.len() > 16384 {
-            log::info!("long insertion: {} ({}bp)", name, sequence.len());
-        }
-
-        let (block, count) = kmers_table(sequence, k, ctx).await?;
-        let block = block
-            .with_column("name", concat(vec![col("strand"), lit(name)]))?
-            .drop_columns(&["strand"])?;
-
-        curr = if let Some(block0) = curr {
-            Some(block0.union(block)?)
-        } else {
-            Some(block)
-        };
-        curr_count += count;
-
-        if curr_count > 1000000 {
-            log::debug!(
-                "ranking over {} sequences with {} k-mers.",
-                seq_count,
-                curr_count
-            );
-            let tbl = curr.take().unwrap();
-            let res = idx.rank_many(tbl).await?;
-            let res = materialise(res, &ctx).await?;
-            let res = res
-                .with_column("strand", substring(col("query_name"), lit(1), lit(1)))?
-                .with_column("query_name", substr(col("query_name"), lit(2)))?;
-            let res = res.aggregate(
-                vec![col("query_name")],
-                vec![
-                    min(col("distance")).alias("distance"),
-                    first_value(
-                        col("subject_name"),
-                        Some(vec![col("distance").sort(true, false)]),
-                    )
-                    .alias("feature"),
-                    first_value(col("class"), Some(vec![col("distance").sort(true, false)]))
-                        .alias("class"),
-                    first_value(col("strand"), Some(vec![col("distance").sort(true, false)]))
-                        .alias("strand"),
-                ],
-            )?;
-            if let Some(result0) = result {
-                result = Some(result0.union(res)?);
-            } else {
-                result = Some(res);
+        for (nix, score) in rev {
+            if score > best_score {
+                best_nix = nix;
+                best_score = score;
+                best_strand = false;
             }
-            seq_count = 0;
-            curr_count = 0;
+        }
+
+        if best_score > 0.5 {
+            let class = &idx.names[best_nix as usize];
+            seq_hash_builder.append_value(seq_hash);
+            class_builder.append_value(class);
+            strand_builder.append_value(if best_strand { "+" } else { "-" });
+            distance_builder.append_value(1.0 - best_score);
         }
     }
 
-    if let Some(tbl) = curr {
-        log::debug!(
-            "ranking over {} sequences with {} k-mers.",
-            seq_count,
-            curr_count
-        );
+    let dt = now.elapsed().as_secs_f64();
+    let sps = (n as f64) / dt;
+    log::info!("insertion sequence classification took {:2.2}s ({:2.2} sequences/s)", dt, sps);
 
-        let res = idx.rank_many(tbl).await?;
-        let res = materialise(res, &ctx).await?;
-        let res = res
-            .with_column("strand", substring(col("query_name"), lit(1), lit(1)))?
-            .with_column("query_name", substr(col("query_name"), lit(2)))?;
-        let res = res.aggregate(
-            vec![col("query_name")],
-            vec![
-                min(col("distance")).alias("distance"),
-                first_value(
-                    col("subject_name"),
-                    Some(vec![col("distance").sort(true, false)]),
-                )
-                .alias("feature"),
-                first_value(col("class"), Some(vec![col("distance").sort(true, false)]))
-                    .alias("class"),
-                first_value(col("strand"), Some(vec![col("distance").sort(true, false)]))
-                    .alias("strand"),
-            ],
-        )?;
-        if let Some(result0) = result {
-            result = Some(result0.union(res)?);
-        } else {
-            result = Some(res);
-        }
-    }
+    let seq_hash_array = seq_hash_builder.finish();
+    let class_array = class_builder.finish();
+    let strand_array = strand_builder.finish();
+    let distance_array = distance_builder.finish();
 
-    if false {
-        if let Some(tbl) = &result {
-            tbl.clone().show().await?;
-        } else {
-            log::info!("no results!");
-        }
-    }
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("query_name", DataType::Utf8, false),
+        Field::new("class", DataType::Utf8, false),
+        Field::new("strand", DataType::Utf8, false),
+        Field::new("distance", DataType::Float64, false),
+    ]));
 
-    log::info!(
-        "classified {} sequences in {}s.",
-        total_ins_sequences,
-        now.elapsed().as_secs_f32()
-    );
+    let recs = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(seq_hash_array),
+            Arc::new(class_array),
+            Arc::new(strand_array),
+            Arc::new(distance_array),
+        ],
+    )
+    .map_err(|e| Error::new(ErrorKind::Other, e))?;
+
+    let result = ctx.read_batch(recs)?;
 
     Ok(result)
 }
 
-pub(crate) async fn materialise(df: DataFrame, ctx: &SessionContext) -> std::io::Result<DataFrame> {
+pub(crate) async fn _materialise(df: DataFrame, ctx: &SessionContext) -> std::io::Result<DataFrame> {
     let batches = df.collect().await?;
     let df = ctx.read_batches(batches)?;
     Ok(df)
