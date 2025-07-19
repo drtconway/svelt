@@ -2948,6 +2948,7 @@ dependencies = [
  "log",
  "noodles",
  "rand 0.9.1",
+ "rayon",
  "regex",
  "tokio",
 ]

@@ -20,7 +20,11 @@ use datafusion::{
 };
 use noodles::fasta;
 
-use crate::{errors::wrap_file_error, kmers::KmerIterator, options::IndexingOptions};
+use crate::{
+    errors::wrap_file_error,
+    kmers::KmerIterator,
+    options::IndexingOptions,
+};
 
 pub struct FeatureIndex {
     pub(crate) k: usize,
@@ -269,52 +273,53 @@ impl FeatureIndex {
         self.k
     }
 
-    pub fn rank(&self, query: &str) -> std::io::Result<(Vec<(u32, f64)>, Vec<(u32, f64)>)> {
-        let mut fwd: HashMap<u64, u32> = HashMap::new();
-        let mut rev: HashMap<u64, u32> = HashMap::new();
+    pub fn rank(&self, query: &str) -> (Vec<(u32, f64)>, Vec<(u32, f64)>) {
+        let mut fwd: Vec<u64> = Vec::new();
+        fwd.reserve(query.len());
+        let mut rev: Vec<u64> = Vec::new();
+        rev.reserve(query.len());
 
         for (x, y) in KmerIterator::new(self.k, query.as_bytes().iter()) {
-            *fwd.entry(x.0).or_default() += 1;
-            *rev.entry(y.0).or_default() += 1;
+            fwd.push(x.0);
+            rev.push(y.0);
         }
 
+        fwd.sort();
+        let fwd: Vec<(u64, u32)> = fwd
+            .chunk_by(|x, y| x == y)
+            .map(|xs| (xs[0], xs.len() as u32))
+            .collect();
+        let fwd = self.rank_inner(fwd);
+
+        rev.sort();
+        let rev: Vec<(u64, u32)> = rev
+            .chunk_by(|x, y| x == y)
+            .map(|xs| (xs[0], xs.len() as u32))
+            .collect();
+        let rev = self.rank_inner(rev);
+        (fwd, rev)
+    }
+
+    fn rank_inner(&self, kmers: Vec<(u64, u32)>) -> Vec<(u32, f64)> {
         let mut q_mag = 0;
-        let mut d_fwd: HashMap<u32, u32> = HashMap::new();
-        for (x, q) in fwd.iter() {
-            q_mag += *q * *q;
-            if let Some(items) = self.kmers.get(x) {
-                for (nix, s) in items.iter() {
-                    *d_fwd.entry(*nix).or_default() += *q * *s;
+        let mut d: Vec<u32> = vec![0; self.names.len()];
+        for (x, count) in kmers {
+            q_mag += count * count;
+            if let Some(hits) = self.kmers.get(&x) {
+                for (nix, hit_count) in hits.iter() {
+                    d[*nix as usize] += count * *hit_count;
                 }
             }
         }
         let q_mag = (q_mag as f64).sqrt();
-
-        let mut fwd_res: Vec<(u32, f64)> = d_fwd
+        let d: Vec<(u32, f64)> = d
             .into_iter()
-            .map(|(nix, sum)| (nix, (sum as f64) / (q_mag * self.mags[nix as usize])))
+            .enumerate()
+            .filter(|(_i, d)| *d > 0)
+            .map(|(i, d)| (i as u32, (d as f64) / (q_mag * self.mags[i])))
             .collect();
-        fwd_res.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
 
-        let mut q_mag = 0;
-        let mut d_rev: HashMap<u32, u32> = HashMap::new();
-        for (x, q) in rev.iter() {
-            q_mag += *q * *q;
-            if let Some(items) = self.kmers.get(x) {
-                for (nix, s) in items.iter() {
-                    *d_rev.entry(*nix).or_default() += *q * *s;
-                }
-            }
-        }
-        let q_mag = (q_mag as f64).sqrt();
-
-        let mut rev_res: Vec<(u32, f64)> = d_rev
-            .into_iter()
-            .map(|(nix, sum)| (nix, (sum as f64) / (q_mag * self.mags[nix as usize])))
-            .collect();
-        rev_res.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
-
-        Ok((fwd_res, rev_res))
+        d
     }
 }
 

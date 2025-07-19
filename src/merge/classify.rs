@@ -9,7 +9,10 @@ use datafusion::{
     prelude::{DataFrame, SessionContext},
 };
 use std::{
-    io::{Error, ErrorKind}, sync::Arc, time::Instant, u32
+    io::{Error, ErrorKind},
+    sync::Arc,
+    time::Instant,
+    u32,
 };
 
 pub(crate) async fn find_classifications(
@@ -17,6 +20,8 @@ pub(crate) async fn find_classifications(
     features: &str,
     ctx: &SessionContext,
 ) -> std::io::Result<DataFrame> {
+    use rayon::prelude::*;
+
     let n: usize = batch.iter().map(|recs| recs.num_rows()).sum();
     log::info!("number of sequences to classify: {}", n);
 
@@ -26,45 +31,43 @@ pub(crate) async fn find_classifications(
 
     let now = Instant::now();
 
-    let itr = batch.iter().flat_map(|recs| MergeIterator::new(recs));
+    let results: Vec<Vec<Option<(String, String, String, f64)>>> = batch
+        .par_iter()
+        .map(|recs| {
+            let itr = MergeIterator::new(recs);
+            let inner: Vec<Option<(String, String, String, f64)>> = itr
+                .map(|(seq_hash, sequence)| {
+                    find_best_classification(sequence, &idx)
+                        .map(|(class, strand, score)| (seq_hash.to_string(), class, strand, score))
+                })
+                .collect();
+            inner
+        })
+        .collect();
 
     let mut seq_hash_builder = GenericStringBuilder::<i32>::new();
     let mut class_builder = GenericStringBuilder::<i32>::new();
     let mut strand_builder = GenericStringBuilder::<i32>::new();
     let mut distance_builder = PrimitiveBuilder::<Float64Type>::new();
 
-    for (seq_hash, sequence) in itr {
-        let (fwd, rev) = idx.rank(sequence)?;
-        let mut best_nix = u32::MAX;
-        let mut best_score = -1.0;
-        let mut best_strand = true;
-        for (nix, score) in fwd {
-            if score > best_score {
-                best_nix = nix;
-                best_score = score;
-                best_strand = true;
+    for block in results {
+        for item in block {
+            if let Some((seq_hash, class, strand, score)) = item {
+                seq_hash_builder.append_value(seq_hash);
+                class_builder.append_value(class);
+                strand_builder.append_value(strand);
+                distance_builder.append_value(score);
             }
-        }
-        for (nix, score) in rev {
-            if score > best_score {
-                best_nix = nix;
-                best_score = score;
-                best_strand = false;
-            }
-        }
-
-        if best_score > 0.5 {
-            let class = &idx.names[best_nix as usize];
-            seq_hash_builder.append_value(seq_hash);
-            class_builder.append_value(class);
-            strand_builder.append_value(if best_strand { "+" } else { "-" });
-            distance_builder.append_value(1.0 - best_score);
         }
     }
 
     let dt = now.elapsed().as_secs_f64();
     let sps = (n as f64) / dt;
-    log::info!("insertion sequence classification took {:2.2}s ({:2.2} sequences/s)", dt, sps);
+    log::info!(
+        "insertion sequence classification took {:2.2}s ({:2.2} sequences/s)",
+        dt,
+        sps
+    );
 
     let seq_hash_array = seq_hash_builder.finish();
     let class_array = class_builder.finish();
@@ -94,7 +97,42 @@ pub(crate) async fn find_classifications(
     Ok(result)
 }
 
-pub(crate) async fn _materialise(df: DataFrame, ctx: &SessionContext) -> std::io::Result<DataFrame> {
+fn find_best_classification(sequence: &str, idx: &FeatureIndex) -> Option<(String, String, f64)> {
+    let (fwd, rev) = idx.rank(sequence);
+    let mut best_nix = u32::MAX;
+    let mut best_score = -1.0;
+    let mut best_strand = true;
+    for (nix, score) in fwd {
+        if score > best_score {
+            best_nix = nix;
+            best_score = score;
+            best_strand = true;
+        }
+    }
+    for (nix, score) in rev {
+        if score > best_score {
+            best_nix = nix;
+            best_score = score;
+            best_strand = false;
+        }
+    }
+
+    if best_score > 0.5 {
+        let class = &idx.names[best_nix as usize];
+        Some((
+            class.clone(),
+            if best_strand { "+" } else { "-" }.to_string(),
+            1.0 - best_score,
+        ))
+    } else {
+        None
+    }
+}
+
+pub(crate) async fn _materialise(
+    df: DataFrame,
+    ctx: &SessionContext,
+) -> std::io::Result<DataFrame> {
     let batches = df.collect().await?;
     let df = ctx.read_batches(batches)?;
     Ok(df)

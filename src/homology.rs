@@ -61,7 +61,7 @@ async fn find_similar_single(features: &str, query: &str, ctx: &SessionContext) 
 }
 
 fn find_similar_compile_results(sequence: &str, idx: &FeatureIndex) -> std::io::Result<Vec<(u32, (f64, f64))>> {
-    let (fwd, rev) = idx.rank(sequence)?;
+    let (fwd, rev) = idx.rank(sequence);
 
     let mut res = BTreeMap::new();
     for (nix, score) in fwd {
