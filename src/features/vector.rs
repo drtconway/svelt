@@ -8,7 +8,6 @@ pub struct MergeVector {
     toc: Vec<usize>,
 }
 
-
 static J: usize = 10;
 static N: usize = 1 << J;
 
@@ -30,9 +29,12 @@ impl MergeVector {
             postings.append(&mut hits);
             toc.push(postings.len());
         }
+        index[N] = kmers.len();
 
-        for i in 1..=N {
-            toc[i] = max(toc[i - 1], toc[i]);
+        for i in (1..=N).rev() {
+            if index[i - 1] == 0 {
+                index[i - 1] = index[i];
+            }
         }
 
         MergeVector {
@@ -45,7 +47,13 @@ impl MergeVector {
     }
 
     pub fn iter(&self) -> MergeVectorCursor<'_> {
-        MergeVectorCursor::new(&self.kmers, self.shift, &self.index, &self.postings, &self.toc)
+        MergeVectorCursor::new(
+            &self.kmers,
+            self.shift,
+            &self.index,
+            &self.postings,
+            &self.toc,
+        )
     }
 }
 

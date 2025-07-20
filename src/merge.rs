@@ -151,7 +151,7 @@ pub async fn merge_vcfs(
 
         let ins = ins.collect().await?;
         let classifications = classify::find_classifications(ins, features, &ctx).await?;
-        if true {
+        if false {
             classifications
                 .clone()
                 .sort_by(vec![col("distance")])?
