@@ -1,3 +1,5 @@
+use std::cmp::max;
+
 pub struct MergeVector {
     kmers: Vec<u64>,
     shift: usize,
@@ -6,14 +8,18 @@ pub struct MergeVector {
     toc: Vec<usize>,
 }
 
+
+static J: usize = 10;
+static N: usize = 1 << J;
+
 impl MergeVector {
     pub fn new(k: usize, items: Vec<(u64, Vec<(u32, u32)>)>) -> Self {
         let mut items = items;
         items.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
 
-        let shift = if k > 4 { 2 * k - 8 } else { 0 };
+        let shift = if 2 * k > J { 2 * k - J } else { 0 };
         let mut kmers = Vec::new();
-        let mut index = vec![0; 257];
+        let mut index = vec![0; N + 1];
         let mut postings = Vec::new();
         let mut toc = Vec::new();
 
@@ -23,6 +29,10 @@ impl MergeVector {
             index[1 + (kmer >> shift) as usize] = i;
             postings.append(&mut hits);
             toc.push(postings.len());
+        }
+
+        for i in 1..=N {
+            toc[i] = max(toc[i - 1], toc[i]);
         }
 
         MergeVector {
@@ -67,13 +77,24 @@ impl<'a> MergeVectorCursor<'a> {
     }
 
     pub fn seek(&mut self, x: u64) {
-        let j = self.index[(x >> self.shift) as usize];
-        if j > self.i {
-            self.i = j;
+        let j0 = self.index[(x >> self.shift) as usize];
+        let j1 = self.index[(x >> self.shift) as usize + 1];
+        if j0 > self.i {
+            self.i = j0;
         }
-        while self.i < self.kmers.len() && self.kmers[self.i] < x {
-            self.i += 1;
+        let mut first = self.i;
+        let mut count = j1 - first;
+        while count > 0 {
+            let step = count / 2;
+            let it = first + step;
+            if self.kmers[it] < x {
+                first = it + 1;
+                count -= step + 1;
+            } else {
+                count = step;
+            }
         }
+        self.i = first;
     }
 
     pub fn here(&self) -> Option<(u64, &[(u32, u32)])> {
