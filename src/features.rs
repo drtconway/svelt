@@ -20,15 +20,13 @@ use datafusion::{
 };
 use noodles::fasta;
 
-use crate::{
-    errors::wrap_file_error,
-    kmers::KmerIterator,
-    options::IndexingOptions,
-};
+use crate::{errors::wrap_file_error, kmers::KmerIterator, options::IndexingOptions};
+
+mod vector;
 
 pub struct FeatureIndex {
     pub(crate) k: usize,
-    pub(crate) kmers: HashMap<u64, Vec<(u32, u32)>>,
+    pub(crate) kmers: vector::MergeVector,
     pub(crate) names: Vec<String>,
     pub(crate) sequences: Vec<String>,
     pub(crate) mags: Vec<f64>,
@@ -74,6 +72,9 @@ impl FeatureIndex {
 
             sequence_number += 1;
         }
+
+        let kmers: Vec<(u64, Vec<(u32, u32)>)> = kmers.into_iter().collect();
+        let kmers = vector::MergeVector::new(k, kmers);
 
         log::info!("index construction complete");
 
@@ -133,7 +134,7 @@ impl FeatureIndex {
 
         for (x, hits) in self.kmers.iter() {
             for (nix, count) in hits.iter() {
-                kmers_builder.append_value(*x);
+                kmers_builder.append_value(x);
                 nixs_builder.append_value(*nix);
                 counts_builder.append_value(*count);
             }
@@ -258,6 +259,9 @@ impl FeatureIndex {
             }
         }
 
+        let kmers: Vec<(u64, Vec<(u32, u32)>)> = kmers.into_iter().collect();
+        let kmers = vector::MergeVector::new(k, kmers);
+
         log::info!("loading index done.");
 
         Ok(FeatureIndex {
@@ -303,11 +307,15 @@ impl FeatureIndex {
     fn rank_inner(&self, kmers: Vec<(u64, u32)>) -> Vec<(u32, f64)> {
         let mut q_mag = 0;
         let mut d: Vec<u32> = vec![0; self.names.len()];
+        let mut iter = self.kmers.iter();
         for (x, count) in kmers {
             q_mag += count * count;
-            if let Some(hits) = self.kmers.get(&x) {
-                for (nix, hit_count) in hits.iter() {
-                    d[*nix as usize] += count * *hit_count;
+            iter.seek(x);
+            if let Some((x0, hits)) = iter.here() {
+                if x == x0 {
+                    for (nix, hit_count) in hits.iter() {
+                        d[*nix as usize] += count * *hit_count;
+                    }
                 }
             }
         }
