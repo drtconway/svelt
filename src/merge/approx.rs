@@ -94,13 +94,13 @@ pub(super) fn approx_bnd_there_here_join(
                     .and((col("lhs_vix_set") & col("rhs_vix_set")).eq(lit(0))),
             ),
         )?
+        .select_columns(&["lhs_row_key", "lhs_vix_set", "rhs_row_key", "rhs_vix_set"])?
+        .distinct()?
         .sort(vec![
             (col("lhs_vix_count") + col("rhs_vix_count")).sort(false, false),
             col("lhs_row_key").sort(true, false),
             col("rhs_row_key").sort(true, false),
-        ])?
-        .select_columns(&["lhs_row_key", "lhs_vix_set", "rhs_row_key", "rhs_vix_set"])?
-        .distinct()?;
+        ])?;
 
     Ok(exact)
 }
@@ -358,8 +358,17 @@ pub(super) async fn approx_near_join(
     )
     .map_err(|e| Error::new(ErrorKind::Other, e))?;
 
-    ctx.read_batch(recs)
-        .map_err(|e| Error::new(ErrorKind::Other, e))
+    let res = ctx
+        .read_batch(recs)
+        .map_err(|e| Error::new(ErrorKind::Other, e))?;
+
+    let res = res.sort(vec![
+        (col("lhs_vix_count") + col("rhs_vix_count")).sort(false, false),
+        col("lhs_row_key").sort(true, false),
+        col("rhs_row_key").sort(true, false),
+    ])?;
+
+    Ok(res)
 }
 
 struct MergeIterator<'a> {

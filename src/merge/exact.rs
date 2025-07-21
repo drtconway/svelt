@@ -44,13 +44,13 @@ pub(super) fn full_exact_indel_join(orig: DataFrame, n: usize) -> std::io::Resul
                     ),
             ),
         )?
+        .select_columns(&["lhs_row_key", "lhs_vix_set", "rhs_row_key", "rhs_vix_set"])?
+        .distinct()?
         .sort(vec![
             (col("lhs_vix_count") + col("rhs_vix_count")).sort(false, false),
             col("lhs_row_key").sort(true, false),
             col("rhs_row_key").sort(true, false),
-        ])?
-        .select_columns(&["lhs_row_key", "lhs_vix_set", "rhs_row_key", "rhs_vix_set"])?
-        .distinct()?;
+        ])?;
 
     Ok(exact)
 }
@@ -86,13 +86,13 @@ pub(super) fn full_exact_locus_ins_join(
                     ),
             ),
         )?
+        .select_columns(&["lhs_row_key", "lhs_vix_set", "rhs_row_key", "rhs_vix_set"])?
+        .distinct()?
         .sort(vec![
             (col("lhs_vix_count") + col("rhs_vix_count")).sort(false, false),
             col("lhs_row_key").sort(true, false),
             col("rhs_row_key").sort(true, false),
-        ])?
-        .select_columns(&["lhs_row_key", "lhs_vix_set", "rhs_row_key", "rhs_vix_set"])?
-        .distinct()?;
+        ])?;
 
     Ok(exact)
 }
@@ -133,13 +133,13 @@ pub(super) fn full_exact_bnd(orig: DataFrame, n: usize) -> std::io::Result<DataF
                     .and((col("lhs_vix_set") & col("rhs_vix_set")).eq(lit(0))),
             ),
         )?
+        .select_columns(&["lhs_row_key", "lhs_vix_set", "rhs_row_key", "rhs_vix_set"])?
+        .distinct()?
         .sort(vec![
             (col("lhs_vix_count") + col("rhs_vix_count")).sort(false, false),
             col("lhs_row_key").sort(true, false),
             col("rhs_row_key").sort(true, false),
-        ])?
-        .select_columns(&["lhs_row_key", "lhs_vix_set", "rhs_row_key", "rhs_vix_set"])?
-        .distinct()?;
+        ])?;
 
     Ok(exact)
 }
