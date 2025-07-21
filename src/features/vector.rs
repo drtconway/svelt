@@ -1,4 +1,3 @@
-use std::cmp::max;
 
 pub struct MergeVector {
     kmers: Vec<u64>,
