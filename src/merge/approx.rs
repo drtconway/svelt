@@ -58,9 +58,10 @@ pub(super) fn approx_bnd_here_there_join(
             (col("lhs_vix_count") + col("rhs_vix_count")).sort(false, false),
             col("lhs_row_key").sort(true, false),
             col("rhs_row_key").sort(true, false),
-        ])?
-        .select_columns(&["lhs_row_key", "lhs_vix_set", "rhs_row_key", "rhs_vix_set"])?
-        .distinct()?;
+        ])
+        .unwrap()
+        .select_columns(&["lhs_row_key", "lhs_vix_set", "rhs_row_key", "rhs_vix_set"])
+        .unwrap();
 
     Ok(exact)
 }
@@ -94,13 +95,14 @@ pub(super) fn approx_bnd_there_here_join(
                     .and((col("lhs_vix_set") & col("rhs_vix_set")).eq(lit(0))),
             ),
         )?
-        .select_columns(&["lhs_row_key", "lhs_vix_set", "rhs_row_key", "rhs_vix_set"])?
-        .distinct()?
         .sort(vec![
             (col("lhs_vix_count") + col("rhs_vix_count")).sort(false, false),
             col("lhs_row_key").sort(true, false),
             col("rhs_row_key").sort(true, false),
-        ])?;
+        ])
+        .unwrap()
+        .select_columns(&["lhs_row_key", "lhs_vix_set", "rhs_row_key", "rhs_vix_set"])
+        .unwrap();
 
     Ok(exact)
 }
@@ -145,8 +147,10 @@ pub(super) async fn approx_near_join(
 
     let mut lhs_row_key_builder = PrimitiveBuilder::<UInt32Type>::new();
     let mut lhs_vix_set_builder = PrimitiveBuilder::<UInt32Type>::new();
+    let mut lhs_vix_count_builder = PrimitiveBuilder::<UInt32Type>::new();
     let mut rhs_row_key_builder = PrimitiveBuilder::<UInt32Type>::new();
     let mut rhs_vix_set_builder = PrimitiveBuilder::<UInt32Type>::new();
+    let mut rhs_vix_count_builder = PrimitiveBuilder::<UInt32Type>::new();
 
     let mut lhs_heap: Heap<Row<'_>> = Heap::new();
     let mut lhs_itr = batch.iter().flat_map(|recs| MergeIterator::new(recs));
@@ -222,8 +226,10 @@ pub(super) async fn approx_near_join(
                 }
                 lhs_row_key_builder.append_value(lhs_val.row_key);
                 lhs_vix_set_builder.append_value(lhs_val.vix_set);
+                lhs_vix_count_builder.append_value(lhs_val.vix_set.count_ones());
                 rhs_row_key_builder.append_value(rhs_item.row_key);
                 rhs_vix_set_builder.append_value(rhs_item.vix_set);
+                rhs_vix_count_builder.append_value(rhs_item.vix_set.count_ones());
                 //log::info!("joining-lhs {:?} and {:?}", lhs_val, rhs_item);
             }
 
@@ -247,8 +253,10 @@ pub(super) async fn approx_near_join(
                 }
                 lhs_row_key_builder.append_value(lhs_item.row_key);
                 lhs_vix_set_builder.append_value(lhs_item.vix_set);
+                lhs_vix_count_builder.append_value(lhs_item.vix_set.count_ones());
                 rhs_row_key_builder.append_value(rhs_val.row_key);
                 rhs_vix_set_builder.append_value(rhs_val.vix_set);
+                rhs_vix_count_builder.append_value(rhs_val.vix_set.count_ones());
                 //log::info!("joining-rhs {:?} and {:?}", rhs_val, lhs_item);
             }
 
@@ -289,8 +297,10 @@ pub(super) async fn approx_near_join(
             }
             lhs_row_key_builder.append_value(lhs_val.row_key);
             lhs_vix_set_builder.append_value(lhs_val.vix_set);
+            lhs_vix_count_builder.append_value(lhs_val.vix_set.count_ones());
             rhs_row_key_builder.append_value(rhs_item.row_key);
             rhs_vix_set_builder.append_value(rhs_item.vix_set);
+            rhs_vix_count_builder.append_value(rhs_item.vix_set.count_ones());
             //log::info!("joining-lhs {:?} and {:?}", lhs_val, rhs_item);
         }
 
@@ -326,8 +336,10 @@ pub(super) async fn approx_near_join(
             }
             lhs_row_key_builder.append_value(lhs_item.row_key);
             lhs_vix_set_builder.append_value(lhs_item.vix_set);
+            lhs_vix_count_builder.append_value(lhs_item.vix_set.count_ones());
             rhs_row_key_builder.append_value(rhs_val.row_key);
             rhs_vix_set_builder.append_value(rhs_val.vix_set);
+            rhs_vix_count_builder.append_value(rhs_val.vix_set.count_ones());
             //log::info!("joining-rhs {:?} and {:?}", rhs_val, lhs_item);
         }
 
@@ -337,14 +349,18 @@ pub(super) async fn approx_near_join(
 
     let lhs_row_key_array = lhs_row_key_builder.finish();
     let lhs_vix_set_array = lhs_vix_set_builder.finish();
+    let lhs_vix_count_array = lhs_vix_count_builder.finish();
     let rhs_row_key_array = rhs_row_key_builder.finish();
     let rhs_vix_set_array = rhs_vix_set_builder.finish();
+    let rhs_vix_count_array = rhs_vix_count_builder.finish();
 
     let schema = Arc::new(Schema::new(vec![
         Field::new("lhs_row_key", DataType::UInt32, false),
         Field::new("lhs_vix_set", DataType::UInt32, false),
+        Field::new("lhs_vix_count", DataType::UInt32, false),
         Field::new("rhs_row_key", DataType::UInt32, false),
         Field::new("rhs_vix_set", DataType::UInt32, false),
+        Field::new("rhs_vix_count", DataType::UInt32, false),
     ]));
 
     let recs = RecordBatch::try_new(
@@ -352,8 +368,10 @@ pub(super) async fn approx_near_join(
         vec![
             Arc::new(lhs_row_key_array),
             Arc::new(lhs_vix_set_array),
+            Arc::new(lhs_vix_count_array),
             Arc::new(rhs_row_key_array),
             Arc::new(rhs_vix_set_array),
+            Arc::new(rhs_vix_count_array),
         ],
     )
     .map_err(|e| Error::new(ErrorKind::Other, e))?;
@@ -362,11 +380,13 @@ pub(super) async fn approx_near_join(
         .read_batch(recs)
         .map_err(|e| Error::new(ErrorKind::Other, e))?;
 
-    let res = res.sort(vec![
-        (col("lhs_vix_count") + col("rhs_vix_count")).sort(false, false),
-        col("lhs_row_key").sort(true, false),
-        col("rhs_row_key").sort(true, false),
-    ])?;
+    let res = res
+        .sort(vec![
+            (col("lhs_vix_count") + col("rhs_vix_count")).sort(false, false),
+            col("lhs_row_key").sort(true, false),
+            col("rhs_row_key").sort(true, false),
+        ])
+        .unwrap();
 
     Ok(res)
 }
