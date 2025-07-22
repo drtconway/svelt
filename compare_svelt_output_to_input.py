@@ -26,26 +26,31 @@ def extract_input_ids(input_files):
         sample_to_ids.append(ids)
     return sample_names, sample_to_ids
 
-def extract_svelt_ids_by_sample(svelt_vcf_path, num_samples):
-    """Extracts ORIGINAL_IDS from SVelt output, preserving per-sample position."""
-    ids_by_sample = [set() for _ in range(num_samples)]
+def extract_svelt_ids_by_sample(svelt_vcf_path, sample_names):
+    """
+    Extracts ORIGINAL_IDS or IDLIST_EXT from SVelt output,
+    assigning them to samples with non-reference genotypes.
+    """
+    ids_by_sample = [set() for _ in sample_names]
     with pysam.VariantFile(svelt_vcf_path) as vcf:
         for rec in vcf:
-            original_ids = rec.info.get("ORIGINAL_IDS")
-            if not original_ids:
-                print(f"Warning: Missing ORIGINAL_IDS at {rec.chrom}:{rec.pos}")
-                print(str(rec))
+            # Extract original input IDs from INFO field
+            id_field = rec.info.get("ORIGINAL_IDS") or rec.info.get("IDLIST_EXT")
+            if not id_field:
                 continue
-            if isinstance(original_ids, str):
-                ids = original_ids.split(",")
+
+            if isinstance(id_field, str):
+                original_ids = id_field.split(",")
             else:
-                ids = list(original_ids)
-            if len(ids) != num_samples:
-                print(f"Warning: ORIGINAL_IDS has {len(ids)} entries, expected {num_samples} at {rec.chrom}:{rec.pos}")
-                continue
-            for i, oid in enumerate(ids):
-                if oid != ".":
-                    ids_by_sample[i].add(oid)
+                original_ids = list(id_field)
+
+            # Assign each original ID to samples with non-reference genotype
+            for i, sample in enumerate(sample_names):
+                gt = rec.samples[sample].get("GT")
+                if gt and any(allele not in (0, None) for allele in gt):
+                    for oid in original_ids:
+                        if oid != ".":
+                            ids_by_sample[i].add(oid)
     return ids_by_sample
 
 def compare_ids_by_sample(sample_names, input_ids_by_sample, svelt_ids_by_sample, fail_on_error=True):
@@ -74,7 +79,7 @@ def compare_ids_by_sample(sample_names, input_ids_by_sample, svelt_ids_by_sample
                 )
 
 def main():
-    parser = argparse.ArgumentParser(description="Compare SVelt ORIGINAL_IDS to input VCFs (position-aware)")
+    parser = argparse.ArgumentParser(description="Compare SVelt ORIGINAL_IDS or IDLIST_EXT to input VCFs (genotype-aware)")
     parser.add_argument('--inputs', nargs='+', required=True, help='Input VCF files (Sniffles)')
     parser.add_argument('--svelt', required=True, help='SVelt merged VCF file')
     parser.add_argument('--no-error', action='store_true', help='Warn instead of failing on unexpected IDs')
@@ -83,10 +88,10 @@ def main():
     print("Extracting input IDs...")
     sample_names, input_ids_by_sample = extract_input_ids(args.inputs)
 
-    print("Extracting ORIGINAL_IDS from SVelt VCF...")
-    svelt_ids_by_sample = extract_svelt_ids_by_sample(args.svelt, len(args.inputs))
+    print("Extracting ORIGINAL_IDS/IDLIST_EXT from SVelt VCF...")
+    svelt_ids_by_sample = extract_svelt_ids_by_sample(args.svelt, sample_names)
 
-    print("Comparing input IDs to SVelt ORIGINAL_IDS...")
+    print("Comparing input IDs to SVelt output...")
     try:
         compare_ids_by_sample(sample_names, input_ids_by_sample, svelt_ids_by_sample, fail_on_error=not args.no_error)
     except ValueError as e:
