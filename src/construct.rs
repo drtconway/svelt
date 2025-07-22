@@ -309,8 +309,6 @@ pub fn construct_record(
             for id in hnr.1.ids().iter() {
                 original_ids.push(Some(String::from(id)));
             }
-        } else {
-            original_ids.push(None);
         }
     }
 
