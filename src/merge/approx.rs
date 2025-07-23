@@ -7,11 +7,11 @@ use datafusion::{
     arrow::{
         array::{
             DictionaryArray, GenericByteArray, Int32Array, Int64Array, PrimitiveArray,
-            PrimitiveBuilder, RecordBatch, StringArray, UInt16Array, UInt32Array,
+            PrimitiveBuilder, RecordBatch, StringArray, UInt16Array, UInt32Array, UInt64Array,
         },
         datatypes::{
             DataType, Field, GenericStringType, Int32Type, Int64Type, Schema, UInt8Type,
-            UInt16Type, UInt32Type,
+            UInt16Type, UInt32Type, UInt64Type,
         },
     },
     common::JoinType,
@@ -146,10 +146,10 @@ pub(super) async fn approx_near_join(
     let batch = tbl.collect().await?;
 
     let mut lhs_row_key_builder = PrimitiveBuilder::<UInt32Type>::new();
-    let mut lhs_vix_set_builder = PrimitiveBuilder::<UInt32Type>::new();
+    let mut lhs_vix_set_builder = PrimitiveBuilder::<UInt64Type>::new();
     let mut lhs_vix_count_builder = PrimitiveBuilder::<UInt32Type>::new();
     let mut rhs_row_key_builder = PrimitiveBuilder::<UInt32Type>::new();
-    let mut rhs_vix_set_builder = PrimitiveBuilder::<UInt32Type>::new();
+    let mut rhs_vix_set_builder = PrimitiveBuilder::<UInt64Type>::new();
     let mut rhs_vix_count_builder = PrimitiveBuilder::<UInt32Type>::new();
 
     let mut lhs_heap: Heap<Row<'_>> = Heap::new();
@@ -356,10 +356,10 @@ pub(super) async fn approx_near_join(
 
     let schema = Arc::new(Schema::new(vec![
         Field::new("lhs_row_key", DataType::UInt32, false),
-        Field::new("lhs_vix_set", DataType::UInt32, false),
+        Field::new("lhs_vix_set", DataType::UInt64, false),
         Field::new("lhs_vix_count", DataType::UInt32, false),
         Field::new("rhs_row_key", DataType::UInt32, false),
-        Field::new("rhs_vix_set", DataType::UInt32, false),
+        Field::new("rhs_vix_set", DataType::UInt64, false),
         Field::new("rhs_vix_count", DataType::UInt32, false),
     ]));
 
@@ -400,7 +400,7 @@ struct MergeIterator<'a> {
     length: &'a PrimitiveArray<Int32Type>,
     row_id: &'a PrimitiveArray<Int64Type>,
     row_key: &'a PrimitiveArray<UInt32Type>,
-    vix_set: &'a PrimitiveArray<UInt32Type>,
+    vix_set: &'a PrimitiveArray<UInt64Type>,
     i: usize,
 }
 
@@ -418,7 +418,7 @@ impl<'a> MergeIterator<'a> {
         let length = Self::get_array::<Int32Array>(recs, "length");
         let row_id = Self::get_array::<Int64Array>(recs, "row_id");
         let row_key = Self::get_array::<UInt32Array>(recs, "row_key");
-        let vix_set = Self::get_array::<UInt32Array>(recs, "vix_set");
+        let vix_set = Self::get_array::<UInt64Array>(recs, "vix_set");
         MergeIterator {
             kind,
             kind_values,
@@ -476,7 +476,7 @@ struct Row<'a> {
     length: i32,
     row_id: i64,
     row_key: u32,
-    vix_set: u32,
+    vix_set: u64,
 }
 
 impl<'a> Row<'a> {
@@ -488,7 +488,7 @@ impl<'a> Row<'a> {
         length: i32,
         row_id: i64,
         row_key: u32,
-        vix_set: u32,
+        vix_set: u64,
     ) -> Row<'a> {
         Row {
             kind,
