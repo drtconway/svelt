@@ -23,8 +23,8 @@ use noodles::{
 use crate::{
     breakends::unpaired_breakend_check,
     chroms::ChromSet,
-    construct::{MergeBuilder, add_svelt_header_fields},
-    errors::{as_io_error, wrap_file_error},
+    construct::{add_svelt_header_fields, MergeBuilder},
+    errors::{as_io_error, wrap_file_error, SveltError},
     merge::{
         approx::{approx_bnd_here_there_join, approx_bnd_there_here_join, approx_near_join},
         exact::{full_exact_bnd, full_exact_indel_join, full_exact_locus_ins_join},
@@ -32,7 +32,7 @@ use crate::{
         union::merge_with,
         variant_id::construct_variant_ids,
     },
-    options::{CommonOptions, MergeOptions, make_session_context},
+    options::{make_session_context, CommonOptions, MergeOptions},
     record_seeker::RecordSeeker,
     row_key::RowKey,
     tables::load_vcf_core,
@@ -54,6 +54,11 @@ pub async fn merge_vcfs(
 ) -> std::io::Result<()> {
     options.check().map_err(as_io_error)?;
 
+    if vcf.len() > 64 {
+        log::error!("svelt can only merge up to 64 VCF files at a time ({} given)", vcf.len());
+        return Err(as_io_error(SveltError::TooManyVcfs(vcf.len())));
+    }
+
     let chroms = load_chroms(&vcf[0])?;
     let chroms = Rc::new(chroms);
     let mut readers = Vec::new();
@@ -74,7 +79,7 @@ pub async fn merge_vcfs(
             .read_batch(records)
             .map_err(|e| Error::new(ErrorKind::Other, e))?;
         let df = df
-            .with_column("vix", lit(1u32 << vix))?
+            .with_column("vix", lit(1u64 << vix))?
             .with_column("row_id", RowKey::make(col("row_num"), vix as u32))?;
 
         if let Some(df0) = acc {
