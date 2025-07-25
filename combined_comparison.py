@@ -30,51 +30,48 @@ def extract_input_ids(input_files, need_sample_map=False):
             id_to_sample.update(id_map)
     return (sample_names, sample_to_ids, id_to_sample) if need_sample_map else (sample_names, sample_to_ids)
 
-def extract_svelt_ids_by_sample(vcf_path, sample_names, id_to_sample):
-    """Extracts ORIGINAL_IDS or IDLIST_EXT from SVelt merged VCF."""
+def extract_ids_by_sample_from_merged_vcf(vcf_path, sample_names, id_to_sample=None, info_fields=("ORIGINAL_IDS",), strict_sample_order=False):
+    """
+    Extracts per-sample IDs from a merged VCF using provided INFO field(s).
+    Handles both SVelt and Jasmine-style formats.
+    """
     ids_by_sample = [set() for _ in sample_names]
-    with pysam.VariantFile(vcf_path) as vcf:
-        for rec in vcf:
-            id_field = rec.info.get("ORIGINAL_IDS") or rec.info.get("IDLIST_EXT")
-            if not id_field:
-                continue
-            original_ids = id_field.split(",") if isinstance(id_field, str) else list(id_field)
-            for i, sample in enumerate(sample_names):
-                gt = rec.samples[sample].get("GT")
-                if gt and any(allele not in (0, None) for allele in gt):
-                    for oid in original_ids:
-                        if oid != "." and id_to_sample.get(oid) == sample:
-                            ids_by_sample[i].add(oid)
-    return ids_by_sample
-
-def extract_jasmine_ids_by_sample(vcf_path, num_samples):
-    """Extracts IDLIST[_EXT] from Jasmine merged VCF, assigning to each sample index."""
-    ids_by_sample = [set() for _ in range(num_samples)]
     mismatched_count = 0
     total_records = 0
 
     with pysam.VariantFile(vcf_path) as vcf:
         for rec in vcf:
             total_records += 1
-            idlist = rec.info.get("IDLIST_EXT") or rec.info.get("IDLIST")
-            if not idlist:
+
+            id_values = None
+            for field in info_fields:
+                id_values = rec.info.get(field)
+                if id_values:
+                    break
+            if not id_values:
                 continue
-            ids = idlist.split(",") if isinstance(idlist, str) else list(idlist)
 
-            if len(ids) != num_samples:
-                mismatched_count += 1
-                continue
+            ids = id_values.split(",") if isinstance(id_values, str) else list(id_values)
 
-            for i, id_ in enumerate(ids):
-                if id_ != ".":
-                    ids_by_sample[i].add(id_)
+            if strict_sample_order:
+                if len(ids) != len(sample_names):
+                    mismatched_count += 1
+                    continue
+                for i, id_ in enumerate(ids):
+                    if id_ != ".":
+                        ids_by_sample[i].add(id_)
+            else:
+                for i, sample in enumerate(sample_names):
+                    gt = rec.samples.get(sample, {}).get("GT")
+                    if gt and any(allele not in (0, None) for allele in gt):
+                        for id_ in ids:
+                            if id_ != "." and id_to_sample.get(id_) == sample:
+                                ids_by_sample[i].add(id_)
 
-    if mismatched_count > 0:
-        print(f"\nJasmine IDLIST mismatch: {mismatched_count} of {total_records} records "
-              f"had incorrect number of IDs (expected {num_samples}). These were skipped.\n")
+    if strict_sample_order and mismatched_count > 0:
+        print(f"\n{vcf_path}: {mismatched_count} of {total_records} records had mismatched ID list length. Skipped.\n")
 
     return ids_by_sample
-
 
 def compare_ids_by_sample(sample_names, input_ids_by_sample, merged_ids_by_sample, label="Merged", fail_on_error=True):
     print(f"\n=== {label} Comparison by Sample ===")
@@ -103,7 +100,7 @@ def compare_ids_by_sample(sample_names, input_ids_by_sample, merged_ids_by_sampl
                 )
 
 def main():
-    parser = argparse.ArgumentParser(description="Compare merged VCFs (Jasmine or Svelt) to input VCFs.")
+    parser = argparse.ArgumentParser(description="Compare merged VCFs (Jasmine or SVelt) to input VCFs.")
     parser.add_argument('--inputs', nargs='+', required=True, help='Input VCF files (e.g., Sniffles)')
     parser.add_argument('--jasmine', help='Jasmine merged VCF file')
     parser.add_argument('--svelt', help='Svelt merged VCF file')
@@ -117,13 +114,21 @@ def main():
     print("Extracting input IDs...")
     if args.svelt:
         sample_names, input_ids_by_sample, id_to_sample = extract_input_ids(args.inputs, need_sample_map=True)
-        print("Extracting ORIGINAL_IDS/IDLIST_EXT from Svelt VCF...")
-        merged_ids_by_sample = extract_svelt_ids_by_sample(args.svelt, sample_names, id_to_sample)
+        print("Extracting IDs from Svelt merged VCF...")
+        merged_ids_by_sample = extract_ids_by_sample_from_merged_vcf(
+            args.svelt, sample_names, id_to_sample,
+            info_fields=("ORIGINAL_IDS", "IDLIST_EXT"),
+            strict_sample_order=False
+        )
         label = "Svelt"
     else:
         sample_names, input_ids_by_sample = extract_input_ids(args.inputs, need_sample_map=False)
-        print("Extracting Jasmine IDs by sample...")
-        merged_ids_by_sample = extract_jasmine_ids_by_sample(args.jasmine, len(sample_names))
+        print("Extracting IDs from Jasmine merged VCF...")
+        merged_ids_by_sample = extract_ids_by_sample_from_merged_vcf(
+            args.jasmine, sample_names,
+            info_fields=("IDLIST_EXT", "IDLIST"),
+            strict_sample_order=True
+        )
         label = "Jasmine"
 
     print("Comparing input IDs to merged output...")
