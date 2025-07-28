@@ -21,6 +21,7 @@ pub enum SveltError {
     MissingType(String, usize),
     NeardexDuplicate(u32),
     OptionReferenceRequired(String),
+    TooManyVcfs(usize),
     UnexpectedNull(String),
 }
 
@@ -98,6 +99,9 @@ impl Display for SveltError {
                     "Option '{}' requires a reference sequence to be given",
                     opt
                 )
+            }
+            SveltError::TooManyVcfs(n) => {
+                write!(f, "Too many VCFs (max 64) ({} given)", n)
             }
             SveltError::UnexpectedNull(src) => {
                 write!(f, "unexpected null value at {}", src)

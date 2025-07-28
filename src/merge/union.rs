@@ -6,8 +6,8 @@ use std::{
 
 use datafusion::{
     arrow::{
-        array::{PrimitiveBuilder, RecordBatch, UInt32Array},
-        datatypes::{DataType, Field, Schema, UInt32Type},
+        array::{PrimitiveBuilder, RecordBatch, UInt32Array, UInt64Array},
+        datatypes::{DataType, Field, Schema, UInt32Type, UInt64Type},
     },
     common::JoinType,
     prelude::{DataFrame, SessionContext, coalesce, col, concat_ws, lit, nullif},
@@ -135,7 +135,7 @@ async fn make_merge_table(union: DataFrame, ctx: &SessionContext) -> std::io::Re
 
     let mut orig_row_key_builder = PrimitiveBuilder::<UInt32Type>::new();
     let mut new_row_key_builder = PrimitiveBuilder::<UInt32Type>::new();
-    let mut new_vix_set_builder = PrimitiveBuilder::<UInt32Type>::new();
+    let mut new_vix_set_builder = PrimitiveBuilder::<UInt64Type>::new();
     let mut new_vix_count_builder = PrimitiveBuilder::<UInt32Type>::new();
     for orig_row_key in updated_row_keys.into_iter() {
         let new_row_key = sets.find(orig_row_key);
@@ -153,7 +153,7 @@ async fn make_merge_table(union: DataFrame, ctx: &SessionContext) -> std::io::Re
     let schema = Arc::new(Schema::new(vec![
         Field::new("orig_row_key", DataType::UInt32, false),
         Field::new("new_row_key", DataType::UInt32, false),
-        Field::new("new_vix_set", DataType::UInt32, false),
+        Field::new("new_vix_set", DataType::UInt64, false),
         Field::new("new_vix_count", DataType::UInt32, false),
     ]));
 
@@ -175,9 +175,9 @@ async fn make_merge_table(union: DataFrame, ctx: &SessionContext) -> std::io::Re
 
 pub(crate) struct MergeIterator<'a> {
     pub(crate) lhs_row_key: &'a UInt32Array,
-    pub(crate) lhs_vix_set: &'a UInt32Array,
+    pub(crate) lhs_vix_set: &'a UInt64Array,
     pub(crate) rhs_row_key: &'a UInt32Array,
-    pub(crate) rhs_vix_set: &'a UInt32Array,
+    pub(crate) rhs_vix_set: &'a UInt64Array,
     pub(crate) i: usize,
 }
 
@@ -187,9 +187,9 @@ impl<'a> MergeIterator<'a> {
             log::debug!("field: {:?}", field);
         }
         let lhs_row_key = Self::get_array::<UInt32Array>(recs, "lhs_row_key");
-        let lhs_vix_set = Self::get_array::<UInt32Array>(recs, "lhs_vix_set");
+        let lhs_vix_set = Self::get_array::<UInt64Array>(recs, "lhs_vix_set");
         let rhs_row_key = Self::get_array::<UInt32Array>(recs, "rhs_row_key");
-        let rhs_vix_set = Self::get_array::<UInt32Array>(recs, "rhs_vix_set");
+        let rhs_vix_set = Self::get_array::<UInt64Array>(recs, "rhs_vix_set");
         MergeIterator {
             lhs_row_key,
             lhs_vix_set,
@@ -212,7 +212,7 @@ impl<'a> MergeIterator<'a> {
 }
 
 impl<'a> Iterator for MergeIterator<'a> {
-    type Item = (u32, u32, u32, u32);
+    type Item = (u32, u64, u32, u64);
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.i < self.lhs_vix_set.len() {
