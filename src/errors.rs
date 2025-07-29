@@ -8,8 +8,11 @@ use std::{
 pub enum SveltError {
     BadBreakEnd(String),
     BadChr2(String, usize, String, String),
+    BadFormatField(String, Box<dyn Error + Send + Sync + 'static>),
+    BadInfoField(String, Box<dyn Error + Send + Sync + 'static>),
     BadInfoType(String, usize, String, String),
     BadKind(String, usize, String),
+    BadSample(String, Box<dyn Error + Send + Sync + 'static>),
     Contigs(usize, usize),
     ContigMissing(String, usize),
     ContigOrder(String, usize, usize),
@@ -38,6 +41,12 @@ impl Display for SveltError {
                     chrom, pos, chr2, chrom2
                 )
             }
+            SveltError::BadFormatField(name, _error) => {
+                write!(f, "Problem with parsing FORMAT field '{}'", name)
+            }
+            SveltError::BadInfoField(name, _error) => {
+                write!(f, "Problem with parsing INFO field '{}'", name)
+            }
             SveltError::BadInfoType(chrom, pos, tag, exp) => {
                 write!(
                     f,
@@ -47,6 +56,9 @@ impl Display for SveltError {
             }
             SveltError::BadKind(chrom, pos, kind) => {
                 write!(f, "Unexpected SVTYPE at {}:{}: '{}'", chrom, pos, kind)
+            }
+            SveltError::BadSample(name, _error) => {
+                write!(f, "Problem with parsing sample field '{}'", name)
             }
             SveltError::Contigs(exp, got) => write!(
                 f,
@@ -63,13 +75,8 @@ impl Display for SveltError {
                     chrom, exp, got
                 )
             }
-            SveltError::FileError(filename, error) => {
-                write!(
-                    f,
-                    "With file '{}' the following error occurred: {}",
-                    filename,
-                    error.as_ref().to_string()
-                )
+            SveltError::FileError(filename, _error) => {
+                write!(f, "Problem processing file '{}'", filename)
             }
             SveltError::MissingAlt(chrom, pos) => {
                 write!(f, "No ALT present at {}:{}", chrom, pos)
@@ -110,7 +117,17 @@ impl Display for SveltError {
     }
 }
 
-impl std::error::Error for SveltError {}
+impl std::error::Error for SveltError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            SveltError::BadFormatField(_name, error) => Some(error.as_ref()),
+            SveltError::BadInfoField(_name, error) => Some(error.as_ref()),
+            SveltError::BadSample(_name, error) => Some(error.as_ref()),
+            SveltError::FileError(_path, error) => Some(error.as_ref()),
+            _ => None,
+        }
+    }
+}
 
 pub fn as_io_error(error: SveltError) -> std::io::Error {
     IoError::new(ErrorKind::Other, error)
@@ -120,6 +137,25 @@ pub fn wrap_file_error<E: std::error::Error + Send + Sync + 'static>(
     e: E,
     filename: &str,
 ) -> std::io::Error {
-    eprintln!("error in {}: {:?}", filename, e);
     as_io_error(SveltError::FileError(String::from(filename), Box::new(e)))
+}
+
+pub trait Context {
+    fn with<R, F: FnOnce() -> std::io::Result<R>>(&self, inner: F) -> std::io::Result<R>;
+}
+
+pub struct FileContext<'a> {
+    filename: &'a str,
+}
+
+impl<'a> FileContext<'a> {
+    pub fn new(filename: &'a str) -> Self {
+        FileContext { filename }
+    }
+}
+
+impl<'a> Context for FileContext<'a> {
+    fn with<R, F: FnOnce() -> std::io::Result<R>>(&self, inner: F) -> std::io::Result<R> {
+        (inner)().map_err(|e| wrap_file_error(e, self.filename))
+    }
 }

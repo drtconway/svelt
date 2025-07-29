@@ -1,11 +1,11 @@
-use std::rc::Rc;
+use std::{error::Error, rc::Rc};
 
 use clap::{Parser, Subcommand};
 use svelt::{
     features::FeatureIndex,
     homology::find_similar,
     merge::merge_vcfs,
-    options::{make_session_context, CommonOptions, IndexingOptions, MergeOptions, QueryOptions},
+    options::{CommonOptions, IndexingOptions, MergeOptions, QueryOptions, make_session_context},
 };
 
 /// Structuaral Variant (SV) VCF merging
@@ -121,7 +121,12 @@ async fn main() -> std::io::Result<()> {
     match res {
         Ok(_) => {}
         Err(error) => {
-            eprintln!("{}", error.to_string());
+            log::error!("Error: {}", error);
+            let mut current_source = error.source();
+            while let Some(source) = current_source {
+                log::error!("Caused by: {}", source);
+                current_source = source.source();
+            }
         }
     }
 

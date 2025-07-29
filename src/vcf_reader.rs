@@ -4,7 +4,7 @@ use noodles::vcf::{self, Header, Record, variant::record::info::field::Value};
 
 use crate::{
     chroms::ChromSet,
-    errors::{SveltError, as_io_error, wrap_file_error},
+    errors::{Context, FileContext, SveltError, as_io_error},
 };
 
 /// A wrapper for a VCF reader that facilitates some of the manipulations.
@@ -18,32 +18,33 @@ pub struct VcfReader {
 impl VcfReader {
     /// Construct a new `VcfReader`, checking that the chromosomes are what we expect.
     pub fn new(path: &str, chroms: Rc<ChromSet>) -> std::io::Result<VcfReader> {
-        let path = String::from(path);
-        let reader = autocompress::autodetect_open(&path).map_err(|e| wrap_file_error(e, &path))?;
-        let mut reader: vcf::io::Reader<Box<dyn BufRead>> = vcf::io::reader::Builder::default()
-            .build_from_reader(reader)
-            .map_err(|e| wrap_file_error(e, &path))?;
-        let header = reader
-            .read_header()
-            .map_err(|e| wrap_file_error(e, &path))?;
-        check_chroms(&header, chroms.as_ref()).map_err(as_io_error)?;
+        FileContext::new(path).with(|| {
+            let path = String::from(path);
+            let reader = autocompress::autodetect_open(&path)?;
+            let mut reader: vcf::io::Reader<Box<dyn BufRead>> =
+                vcf::io::reader::Builder::default().build_from_reader(reader)?;
+            let header = reader.read_header()?;
+            check_chroms(&header, chroms.as_ref()).map_err(as_io_error)?;
 
-        Ok(VcfReader {
-            path,
-            reader,
-            header,
-            chroms,
+            Ok(VcfReader {
+                path,
+                reader,
+                header,
+                chroms,
+            })
         })
     }
 
     /// Rewind the `VcfReader` to the start. (Actually implemented by reopening it.)
     pub fn rewind(&mut self) -> std::io::Result<()> {
-        let reader = autocompress::autodetect_open(&self.path)?;
-        let mut reader: vcf::io::Reader<Box<dyn BufRead>> =
-            vcf::io::reader::Builder::default().build_from_reader(reader)?;
-        let _header = reader.read_header().map_err(|e| wrap_file_error(e, &self.path));
-        self.reader = reader;
-        Ok(())
+        FileContext::new(&self.path).with(|| {
+            let reader = autocompress::autodetect_open(&self.path)?;
+            let mut reader: vcf::io::Reader<Box<dyn BufRead>> =
+                vcf::io::reader::Builder::default().build_from_reader(reader)?;
+            let _header = reader.read_header()?;
+            self.reader = reader;
+            Ok(())
+        })
     }
 
     /// Pull out an INFO field that we expect to be of String type.
