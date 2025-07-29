@@ -23,8 +23,8 @@ use noodles::{
 use crate::{
     breakends::unpaired_breakend_check,
     chroms::ChromSet,
-    construct::{add_svelt_header_fields, MergeBuilder},
-    errors::{as_io_error, wrap_file_error, SveltError},
+    construct::{MergeBuilder, add_svelt_header_fields},
+    errors::{Context, FileContext, SveltError, as_io_error, wrap_file_error},
     merge::{
         approx::{approx_bnd_here_there_join, approx_bnd_there_here_join, approx_near_join},
         exact::{full_exact_bnd, full_exact_indel_join, full_exact_locus_ins_join},
@@ -32,7 +32,7 @@ use crate::{
         union::merge_with,
         variant_id::construct_variant_ids,
     },
-    options::{make_session_context, CommonOptions, MergeOptions},
+    options::{CommonOptions, MergeOptions, make_session_context},
     record_seeker::RecordSeeker,
     row_key::RowKey,
     tables::load_vcf_core,
@@ -55,7 +55,10 @@ pub async fn merge_vcfs(
     options.check().map_err(as_io_error)?;
 
     if vcf.len() > 64 {
-        log::error!("svelt can only merge up to 64 VCF files at a time ({} given)", vcf.len());
+        log::error!(
+            "svelt can only merge up to 64 VCF files at a time ({} given)",
+            vcf.len()
+        );
         return Err(as_io_error(SveltError::TooManyVcfs(vcf.len())));
     }
 
@@ -74,7 +77,7 @@ pub async fn merge_vcfs(
     for vix in 0..readers.len() {
         log::info!("reading {}", readers[vix].path);
         let reader: &mut VcfReader = &mut readers[vix];
-        let records = load_vcf_core(reader).map_err(|e| wrap_file_error(e, &readers[vix].path))?;
+        let records = load_vcf_core(reader)?;
         let df = ctx
             .read_batch(records)
             .map_err(|e| Error::new(ErrorKind::Other, e))?;
@@ -349,18 +352,20 @@ pub async fn merge_vcfs(
 }
 
 fn load_chroms(path: &str) -> std::io::Result<ChromSet> {
-    let reader = autocompress::autodetect_open(path).map_err(|e| wrap_file_error(e, path))?;
-    let mut reader: vcf::io::Reader<Box<dyn BufRead>> =
-        vcf::io::reader::Builder::default().build_from_reader(reader)?;
-    let header: Header = reader.read_header().map_err(|e| wrap_file_error(e, path))?;
+    FileContext::new(path).with(|| {
+        let reader = autocompress::autodetect_open(path)?;
+        let mut reader: vcf::io::Reader<Box<dyn BufRead>> =
+            vcf::io::reader::Builder::default().build_from_reader(reader)?;
+        let header: Header = reader.read_header()?;
 
-    let mut names: Vec<&str> = Vec::new();
-    for contig in header.contigs() {
-        let chrom = contig.0;
-        names.push(chrom);
-    }
-    let chroms = ChromSet::from(names.as_ref());
-    Ok(chroms)
+        let mut names: Vec<&str> = Vec::new();
+        for contig in header.contigs() {
+            let chrom = contig.0;
+            names.push(chrom);
+        }
+        let chroms = ChromSet::from(names.as_ref());
+        Ok(chroms)
+    })
 }
 
 fn get_array<'a, Type: 'static>(recs: &'a RecordBatch, name: &str) -> &'a Type {

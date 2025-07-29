@@ -1,7 +1,7 @@
 use super::SequenceIterator;
 
 use crate::{
-    errors::{as_io_error, wrap_file_error, SveltError},
+    errors::{as_io_error, wrap_file_error, Context, FileContext, SveltError, VariantContext},
     tables::is_seq,
 };
 use autocompress::autodetect_open;
@@ -16,59 +16,81 @@ use noodles::vcf::{
 use std::io::BufRead;
 
 pub struct VcfSequenceIterator {
+    pub(crate) path: String,
     pub(crate) reader: noodles::vcf::io::Reader<Box<dyn BufRead>>,
     pub(crate) header: Header,
 }
 
 impl VcfSequenceIterator {
     pub fn new(filename: &str) -> std::io::Result<VcfSequenceIterator> {
-        let reader = autodetect_open(&filename)?;
-        let mut reader: noodles::vcf::io::Reader<Box<dyn BufRead>> =
-            noodles::vcf::io::reader::Builder::default().build_from_reader(reader)?;
-        let header = reader.read_header().map_err(|e| wrap_file_error(e, &filename))?;
-        Ok(VcfSequenceIterator { reader, header })
+        FileContext::new(filename).with(|| {
+            let path = String::from(filename);
+            let reader = autodetect_open(&filename)?;
+            let mut reader: noodles::vcf::io::Reader<Box<dyn BufRead>> =
+                noodles::vcf::io::reader::Builder::default().build_from_reader(reader)?;
+            let header = reader
+                .read_header()
+                .map_err(|e| wrap_file_error(e, &filename))?;
+            Ok(VcfSequenceIterator {
+                path,
+                reader,
+                header,
+            })
+        })
     }
 
     pub(crate) fn read_one(&mut self) -> std::io::Result<Option<(String, String)>> {
-        let mut record = RecordBuf::default();
-        loop {
-            let r1 = self.reader.read_record_buf(&self.header, &mut record)?;
-            if r1 == 0 {
-                return Ok(None);
-            }
-
-            // First, if it has SVTYPE and it isn't INS, skip.
-            let kind = VcfSequenceIterator::get_info_str(&record, "SVTYPE")?;
-            if let Some(kind) = kind {
-                if kind != "INS" {
-                    continue;
+        FileContext::new(&self.path).with(|| {
+            let mut record = RecordBuf::default();
+            loop {
+                let r1 = self.reader.read_record_buf(&self.header, &mut record)?;
+                if r1 == 0 {
+                    return Ok(None);
                 }
-            }
 
-            let chrom = record.reference_sequence_name().to_string();
-            let pos = record.variant_start().unwrap().get();
+                let chrom = record.reference_sequence_name().to_string();
+                let pos = record.variant_start().unwrap().get();
+                let res = VariantContext::new(&chrom, pos).with(|| {
+                    // First, if it has SVTYPE and it isn't INS, skip.
+                    let kind = VcfSequenceIterator::get_info_str(&record, "SVTYPE")?;
+                    if let Some(kind) = kind {
+                        if kind != "INS" {
+                            // Go round the outer loop again
+                            return Ok(None);
+                        }
+                    }
 
-            let name = record.ids().iter().next();
-            let name = if let Some(name) = name {
-                format!("{}:{}:{}", chrom, pos, name)
-            } else {
-                format!("{}:{}:_", chrom, pos)
-            };
+                    let name = record.ids().iter().next();
+                    let name = if let Some(name) = name {
+                        format!("{}:{}:{}", chrom, pos, name)
+                    } else {
+                        format!("{}:{}:_", chrom, pos)
+                    };
 
-            // Now look for a "long" alt.
-            for alt in record.alternate_bases().iter() {
-                let alt = alt?;
-                if alt.len() > 1 && is_seq(alt) {
-                    return Ok(Some((name, String::from(alt))));
+                    // Now look for a "long" alt.
+                    for alt in record.alternate_bases().iter() {
+                        let alt = alt?;
+                        if alt.len() > 1 && is_seq(alt) {
+                            return Ok(Some((name, String::from(alt))));
+                        }
+                    }
+
+                    // Now look for a "SVELT_ALT_SEQ" tag.
+                    let alt = VcfSequenceIterator::get_info_str(&record, "SVELT_ALT_SEQ")?;
+                    if let Some(alt) = alt {
+                        return Ok(Some((name, alt)));
+                    }
+
+                    // Go round the outer loop again
+                    Ok(None)
+                })?;
+                
+                if res.is_some() {
+                    return Ok(res)
                 }
-            }
 
-            // Now look for a "SVELT_ALT_SEQ" tag.
-            let alt = VcfSequenceIterator::get_info_str(&record, "SVELT_ALT_SEQ")?;
-            if let Some(alt) = alt {
-                return Ok(Some((name, alt)));
             }
-        }
+        })
     }
 
     pub(crate) fn get_info_str(record: &RecordBuf, tag: &str) -> std::io::Result<Option<String>> {
@@ -81,35 +103,19 @@ impl VcfSequenceIterator {
                         if let Some(Some(str)) = str {
                             Ok(Some(str.to_string()))
                         } else {
-                            let chrom = record.reference_sequence_name().to_string();
-                            let pos = record.variant_start().unwrap().get();
                             Err(as_io_error(SveltError::BadInfoType(
-                                chrom,
-                                pos,
                                 String::from(tag),
                                 String::from("String"),
                             )))
                         }
                     }
-                    _ => {
-                        let chrom = record.reference_sequence_name().to_string();
-                        let pos = record.variant_start().unwrap().get();
-                        Err(as_io_error(SveltError::BadInfoType(
-                            chrom,
-                            pos,
-                            String::from(tag),
-                            String::from("String"),
-                        )))
-                    }
+                    _ => Err(as_io_error(SveltError::BadInfoType(
+                        String::from(tag),
+                        String::from("String"),
+                    ))),
                 }
             } else {
-                let chrom = record.reference_sequence_name().to_string();
-                let pos = record.variant_start().unwrap().get();
-                Err(as_io_error(SveltError::MissingInfo(
-                    chrom,
-                    pos,
-                    String::from(tag),
-                )))
+                Err(as_io_error(SveltError::MissingInfo(String::from(tag))))
             }
         } else {
             Ok(None)

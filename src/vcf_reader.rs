@@ -1,6 +1,6 @@
 use std::{io::BufRead, rc::Rc};
 
-use noodles::vcf::{self, Header, Record, variant::record::info::field::Value};
+use noodles::vcf::{self, variant::record::info::field::{value::Array, Value}, Header, Record};
 
 use crate::{
     chroms::ChromSet,
@@ -60,11 +60,7 @@ impl VcfReader {
                     if let Value::String(value) = value {
                         Ok(Some(String::from(value)))
                     } else {
-                        let chrom = String::from(rec.reference_sequence_name());
-                        let pos = rec.variant_start().unwrap()?.get();
                         Err(as_io_error(SveltError::BadInfoType(
-                            chrom,
-                            pos,
                             String::from(name),
                             String::from("String"),
                         )))
@@ -85,12 +81,19 @@ impl VcfReader {
                 Some(value) => {
                     if let Value::Integer(value) = value {
                         Ok(Some(value))
+                    } 
+                    else if let Value::Array(Array::Integer(array)) = value {
+                        if array.len() == 1 {
+                            let value = array.iter().next().unwrap()?;
+                            Ok(value)
+                        } else {
+                            Err(as_io_error(SveltError::BadInfoType(
+                                String::from(name),
+                                String::from("Integer"),
+                            )))
+                        }
                     } else {
-                        let chrom = String::from(rec.reference_sequence_name());
-                        let pos = rec.variant_start().unwrap()?.get();
                         Err(as_io_error(SveltError::BadInfoType(
-                            chrom,
-                            pos,
                             String::from(name),
                             String::from("Integer"),
                         )))

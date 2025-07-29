@@ -7,21 +7,23 @@ use std::{
 #[derive(Debug)]
 pub enum SveltError {
     BadBreakEnd(String),
-    BadChr2(String, usize, String, String),
+    BadChr2(String, String),
+    BadChrom(String),
     BadFormatField(String, Box<dyn Error + Send + Sync + 'static>),
     BadInfoField(String, Box<dyn Error + Send + Sync + 'static>),
-    BadInfoType(String, usize, String, String),
-    BadKind(String, usize, String),
+    BadInfoType(String, String),
+    BadKind(String),
     BadSample(String, Box<dyn Error + Send + Sync + 'static>),
+    BadVariant(String, usize, Box<dyn Error + Send + Sync + 'static>),
     Contigs(usize, usize),
     ContigMissing(String, usize),
     ContigOrder(String, usize, usize),
     FileError(String, Box<dyn Error + Send + Sync + 'static>),
-    MissingAlt(String, usize),
-    MissingChr2(String, usize),
-    MissingInfo(String, usize, String),
+    MissingAlt,
+    MissingChr2,
+    MissingInfo(String),
     MissingK(String),
-    MissingType(String, usize),
+    MissingType,
     NeardexDuplicate(u32),
     OptionReferenceRequired(String),
     TooManyVcfs(usize),
@@ -34,12 +36,15 @@ impl Display for SveltError {
             SveltError::BadBreakEnd(alt) => {
                 write!(f, "Badly formed breakend '{}'", alt)
             }
-            SveltError::BadChr2(chrom, pos, chrom2, chr2) => {
+            SveltError::BadChr2(chrom2, chr2) => {
                 write!(
                     f,
-                    "Bad CHR2 for variant at {}:{} - BND had {}, CHR2 had {}",
-                    chrom, pos, chr2, chrom2
+                    "Inconsistent BND INFO - BND had {}, CHR2 had {}",
+                    chr2, chrom2
                 )
+            }
+            SveltError::BadChrom(chrom) => {
+                write!(f, "Use of undeclared contig '{}'", chrom)
             }
             SveltError::BadFormatField(name, _error) => {
                 write!(f, "Problem with parsing FORMAT field '{}'", name)
@@ -47,18 +52,21 @@ impl Display for SveltError {
             SveltError::BadInfoField(name, _error) => {
                 write!(f, "Problem with parsing INFO field '{}'", name)
             }
-            SveltError::BadInfoType(chrom, pos, tag, exp) => {
+            SveltError::BadInfoType(tag, exp) => {
                 write!(
                     f,
-                    "Unexpected type for variant {}:{} - tag was {}, expected type was {}",
-                    chrom, pos, tag, exp
+                    "Unexpected type of INFO - tag was {}, expected type was {}",
+                    tag, exp
                 )
             }
-            SveltError::BadKind(chrom, pos, kind) => {
-                write!(f, "Unexpected SVTYPE at {}:{}: '{}'", chrom, pos, kind)
+            SveltError::BadKind(kind) => {
+                write!(f, "Unexpected SVTYPE: '{}'", kind)
             }
             SveltError::BadSample(name, _error) => {
                 write!(f, "Problem with parsing sample field '{}'", name)
+            }
+            SveltError::BadVariant(chrom, position, _error) => {
+                write!(f, "Problem with variant at {}:{}", chrom, position)
             }
             SveltError::Contigs(exp, got) => write!(
                 f,
@@ -78,24 +86,20 @@ impl Display for SveltError {
             SveltError::FileError(filename, _error) => {
                 write!(f, "Problem processing file '{}'", filename)
             }
-            SveltError::MissingAlt(chrom, pos) => {
-                write!(f, "No ALT present at {}:{}", chrom, pos)
+            SveltError::MissingAlt => {
+                write!(f, "Missing ALT")
             }
-            SveltError::MissingChr2(chrom, pos) => {
-                write!(f, "Breakend variant without CHR2 at {}:{}", chrom, pos)
+            SveltError::MissingChr2 => {
+                write!(f, "Missing CHR2 INFO field")
             }
-            SveltError::MissingInfo(chrom, pos, field) => {
-                write!(
-                    f,
-                    "Expected field '{}' not found at {}:{}",
-                    field, chrom, pos
-                )
+            SveltError::MissingInfo(field) => {
+                write!(f, "Expected field '{}' not found", field)
             }
             SveltError::MissingK(name) => {
                 write!(f, "index '{}' has missing metadata", name)
             }
-            SveltError::MissingType(chrom, pos) => {
-                write!(f, "Variant without SVTYPE at {}:{}", chrom, pos)
+            SveltError::MissingType => {
+                write!(f, "Missing SVTYPE")
             }
             SveltError::NeardexDuplicate(key) => {
                 write!(f, "Cannot construct Neardex with duplicate key {}", key)
@@ -123,6 +127,7 @@ impl std::error::Error for SveltError {
             SveltError::BadFormatField(_name, error) => Some(error.as_ref()),
             SveltError::BadInfoField(_name, error) => Some(error.as_ref()),
             SveltError::BadSample(_name, error) => Some(error.as_ref()),
+            SveltError::BadVariant(_chrom, _position, error) => Some(error.as_ref()),
             SveltError::FileError(_path, error) => Some(error.as_ref()),
             _ => None,
         }
@@ -157,5 +162,28 @@ impl<'a> FileContext<'a> {
 impl<'a> Context for FileContext<'a> {
     fn with<R, F: FnOnce() -> std::io::Result<R>>(&self, inner: F) -> std::io::Result<R> {
         (inner)().map_err(|e| wrap_file_error(e, self.filename))
+    }
+}
+
+pub struct VariantContext<'a> {
+    chrom: &'a str,
+    position: usize,
+}
+
+impl<'a> VariantContext<'a> {
+    pub fn new(chrom: &'a str, position: usize) -> Self {
+        VariantContext { chrom, position }
+    }
+}
+
+impl<'a> Context for VariantContext<'a> {
+    fn with<R, F: FnOnce() -> std::io::Result<R>>(&self, inner: F) -> std::io::Result<R> {
+        (inner)().map_err(|e| {
+            as_io_error(crate::errors::SveltError::BadVariant(
+                self.chrom.to_string(),
+                self.position,
+                Box::new(e),
+            ))
+        })
     }
 }

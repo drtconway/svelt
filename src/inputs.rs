@@ -10,35 +10,30 @@ use crate::{
 };
 
 pub fn get_svtype(rec: &Record, header: &Header) -> std::io::Result<String> {
-    if let Some(Value::String(value)) = rec.info().get(header, "SVTYPE").unwrap()? {
-        if value.contains(':') {
-            let item = value.split(':').next();
-            match item {
-                Some(kind) => {
-                    return Ok(String::from(kind));
-                }
-                None => {
-                    return Err(SveltError::BadKind(
-                        String::from(rec.reference_sequence_name()),
-                        rec.variant_start().unwrap()?.get(),
-                        value.to_string()
-                    ))
-                    .map_err(as_io_error);
+    match rec.info().get(header, "SVTYPE") {
+        Some(value) => {
+            let value = value?;
+            if let Some(Value::String(value)) = value {
+                let item = value.split(':').next();
+                match item {
+                    Some(kind) => {
+                        return Ok(String::from(kind));
+                    }
+                    None => {
+                        return Err(SveltError::BadKind(value.to_string())).map_err(as_io_error);
+                    }
                 }
             }
-        }
-        return Ok(String::from(value));
+        },
+        None => {
+            // No SVTYPE, so we will have to try and infer it
+        },
     }
 
     let ref_ = rec.reference_bases();
 
     if rec.alternate_bases().len() > 1 {
-        let start = rec.variant_start().unwrap()?.get();
-        return Err(SveltError::MissingType(
-            String::from(rec.reference_sequence_name()),
-            start,
-        ))
-        .map_err(as_io_error);
+        return Err(SveltError::MissingType).map_err(as_io_error);
     }
     if let Some(alt) = rec.alternate_bases().iter().next() {
         let alt = alt?;
@@ -56,12 +51,7 @@ pub fn get_svtype(rec: &Record, header: &Header) -> std::io::Result<String> {
         }
     }
 
-    let start = rec.variant_start().unwrap()?.get();
-    Err(SveltError::MissingType(
-        String::from(rec.reference_sequence_name()),
-        start,
-    ))
-    .map_err(as_io_error)
+    Err(SveltError::MissingType).map_err(as_io_error)
 }
 
 pub fn get_breakend(
