@@ -24,7 +24,7 @@ use crate::{
     breakends::unpaired_breakend_check,
     chroms::ChromSet,
     construct::{MergeBuilder, add_svelt_header_fields},
-    errors::{Context, FileContext, SveltError, as_io_error, wrap_file_error},
+    errors::{Context, FileContext, SveltError, as_io_error},
     merge::{
         approx::{approx_bnd_here_there_join, approx_bnd_there_here_join, approx_near_join},
         exact::{full_exact_bnd, full_exact_indel_join, full_exact_locus_ins_join},
