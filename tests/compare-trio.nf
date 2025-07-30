@@ -42,16 +42,19 @@ process jasmine {
     """
     ls $src > files.txt
 
-    jasmine file_list=files.txt genome_file=$params.genome out_file=out.jasmine.vcf \
-        --normalize_type \
+    jasmine file_list=files.txt genome_file=$params.genome out_file=tmp.jasmine.vcf \
+        --pre_normalize \
         --output_genotypes \
         --clique_merging \
+        --dup_to_ins \
+        --normalize_type \
         --default_zero_genotype
+
+    bcftools sort -o out.jasmine.vcf tmp.jasmine.vcf
     """
 }
 
 workflow {
-    println(params.sources)
     def n = 0
-    vcfs_ch = Channel.from(params.sources) | map { p -> tuple(++n, p) } | prepare | collate(3) | view() | (svelt & jasmine)
+    Channel.from(params.sources) | map { p -> tuple(++n, p) } | prepare | collate(3) | view() | (svelt & jasmine)
 }
