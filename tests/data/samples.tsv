@@ -1,0 +1,10 @@
+family_id	sample_id	vcf_file
+HPG_MEXs	NA20762s	NA20762.sniffles.vcf
+HPG_MEXs	NA20809s	NA20809.sniffles.vcf
+HPG_MEXs	NA20827s	NA20827.sniffles.vcf
+HPG_MEXc	NA20762c	NA20762.cutesv.vcf
+HPG_MEXc	NA20809c	NA20809.cutesv.vcf
+HPG_MEXc	NA20827c	NA20827.cutesv.vcf
+AshkTrio	HG002	HG002vGRCh38_wm_50md_PBCCS_sniffles.s2l20.refined.nSVtypes.ism.vcf
+AshkTrio	HG003	HG003vGRCh38_wm_50md_PBCCS_sniffles.s2l20.refined.nSVtypes.ism.vcf
+AshkTrio	HG004	HG004vGRCh38_wm_50md_PBCCS_sniffles.s2l20.refined.nSVtypes.ism.vcf

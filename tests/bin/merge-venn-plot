@@ -1,3 +1,4 @@
+#!/usr/bin/env RScript
 library(VariantAnnotation)
 library(data.table)
 library(ggplot2)
@@ -13,9 +14,7 @@ make_table <- function(filename) {
     colnames(gt) <- fixed.names
     x <- cbind(data.table(chrom = as.character(seqnames(vcf)),
                           start = start(vcf),
-                          vid = rownames(vcf)),
-                gt)
-
+                          vid = rownames(vcf)), gt)
                
     x.long <- melt(x, id.vars=c("chrom", "start", "vid"))[value != "0/0" & value != "0|0"]
 
@@ -35,9 +34,11 @@ make_venn <- function(filename, name) {
     g
 }
 
-p <- make_venn("results/out.svelt.vcf", "Svelt") +
-     make_venn("results/out.jasmine.vcf", "Jasmine")
+args <- commandArgs(trailingOnly = TRUE)
 
-pdf("results/merge-venn.pdf", width=10, height=5.8)
+p <- make_venn(args[1], "Svelt") +
+     make_venn(args[2], "Jasmine")
+
+pdf(args[3], width=10, height=5.8)
 print(p)
 dev.off()
