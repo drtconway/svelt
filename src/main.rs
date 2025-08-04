@@ -127,6 +127,7 @@ async fn main() -> std::io::Result<()> {
                 log::error!("Caused by: {}", source);
                 current_source = source.source();
             }
+            std::process::exit(1);
         }
     }
 
