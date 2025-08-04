@@ -50,7 +50,7 @@ pub async fn construct_variant_ids(
         .aggregate(
             vec![col("row_key")],
             vec![
-                first_value(col("row_id"), Some(vec![col("vix").sort(true, false)]))
+                first_value(col("row_id"), vec![col("vix").sort(true, false)])
                     .alias("left_row_id"),
             ],
         )?
