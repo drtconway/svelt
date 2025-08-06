@@ -48,8 +48,10 @@ pub(super) fn full_exact_indel_join(orig: DataFrame, n: usize) -> std::io::Resul
             (col("lhs_vix_count") + col("rhs_vix_count")).sort(false, false),
             col("lhs_row_key").sort(true, false),
             col("rhs_row_key").sort(true, false),
-        ]).unwrap()
-        .select_columns(&["lhs_row_key", "lhs_vix_set", "rhs_row_key", "rhs_vix_set"]).unwrap();
+        ])
+        .unwrap()
+        .select_columns(&["lhs_row_key", "lhs_vix_set", "rhs_row_key", "rhs_vix_set"])
+        .unwrap();
 
     Ok(exact)
 }
@@ -79,9 +81,16 @@ pub(super) fn full_exact_locus_ins_join(
                     .and(col("lhs_row_id").lt(col("rhs_row_id")))
                     .and((col("lhs_vix_set") & col("rhs_vix_set")).eq(lit(0)))
                     .and(
-                        (least(vec![abs(col("lhs_length")), abs(col("rhs_length"))]) * lit(1.0)
-                            / greatest(vec![abs(col("lhs_length")), abs(col("rhs_length"))]))
-                        .gt_eq(lit(options.length_ratio)),
+                        lit(false)
+                            .or((least(vec![abs(col("lhs_length")), abs(col("rhs_length"))])
+                                * lit(1.0)
+                                / greatest(vec![abs(col("lhs_length")), abs(col("rhs_length"))]))
+                            .gt_eq(lit(options.length_ratio)))
+                            .or(
+                                (greatest(vec![abs(col("lhs_length")), abs(col("rhs_length"))])
+                                    - least(vec![abs(col("lhs_length")), abs(col("rhs_length"))]))
+                                .lt_eq(lit(options.length_window)),
+                            ),
                     ),
             ),
         )?
@@ -89,8 +98,10 @@ pub(super) fn full_exact_locus_ins_join(
             (col("lhs_vix_count") + col("rhs_vix_count")).sort(false, false),
             col("lhs_row_key").sort(true, false),
             col("rhs_row_key").sort(true, false),
-        ]).unwrap()
-        .select_columns(&["lhs_row_key", "lhs_vix_set", "rhs_row_key", "rhs_vix_set"]).unwrap();
+        ])
+        .unwrap()
+        .select_columns(&["lhs_row_key", "lhs_vix_set", "rhs_row_key", "rhs_vix_set"])
+        .unwrap();
 
     Ok(exact)
 }
@@ -135,7 +146,9 @@ pub(super) fn full_exact_bnd(orig: DataFrame, n: usize) -> std::io::Result<DataF
             (col("lhs_vix_count") + col("rhs_vix_count")).sort(false, false),
             col("lhs_row_key").sort(true, false),
             col("rhs_row_key").sort(true, false),
-        ]).unwrap()
-        .select_columns(&["lhs_row_key", "lhs_vix_set", "rhs_row_key", "rhs_vix_set"]).unwrap();
+        ])
+        .unwrap()
+        .select_columns(&["lhs_row_key", "lhs_vix_set", "rhs_row_key", "rhs_vix_set"])
+        .unwrap();
     Ok(exact)
 }

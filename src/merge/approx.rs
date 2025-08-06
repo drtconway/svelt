@@ -115,6 +115,7 @@ pub(super) async fn approx_near_join(
 ) -> std::io::Result<DataFrame> {
     let w = options.position_window as i32;
     let r = options.length_ratio;
+    let d = options.length_window as i32;
 
     // This is the inner loop test:
     //   1. the starts are within w
@@ -125,14 +126,18 @@ pub(super) async fn approx_near_join(
     let row_is_good = |lhs: &Row<'_>, rhs: &Row<'_>| {
         let lhs_key = RowKey::decode(lhs.row_id as u32);
         let rhs_key = RowKey::decode(rhs.row_id as u32);
+
+        let lhs_abs_len = lhs.length.abs();
+        let rhs_abs_len = rhs.length.abs();
+        let min_abs_len = std::cmp::min(lhs_abs_len, rhs_abs_len);
+        let max_abs_len = std::cmp::max(lhs_abs_len, rhs_abs_len);
+
         (lhs.start - rhs.start).abs() <= w
             && (lhs.end - rhs.end).abs() <= w
             && lhs.row_id < rhs.row_id
             && lhs.row_key != rhs.row_key
             && lhs_key.0 != rhs_key.0
-            && std::cmp::min(lhs.length.abs(), rhs.length.abs()) as f64
-                / std::cmp::max(lhs.length.abs(), rhs.length.abs()) as f64
-                >= r
+            && ((min_abs_len as f64) / (max_abs_len as f64) >= r || max_abs_len - min_abs_len <= d)
     };
 
     let tbl = orig

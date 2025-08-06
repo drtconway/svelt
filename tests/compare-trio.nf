@@ -1,6 +1,7 @@
 params.genome = "${projectDir}/data/genome.fa"
 params.sources = file("${projectDir}/data/*.sniffles.vcf")
 params.samples = file("${projectDir}/data/samples.tsv")
+params.scripts = file("${projectDir}/scripts")
 
 process prepare {
     input:
@@ -34,7 +35,7 @@ process svelt {
 
     script:
     """
-    svelt merge --reference ${params.genome} -o ${fam}_merged.svelt.vcf --write-merge-table ${fam}_merged.svelt.tsv ${src}
+    svelt merge --position-window 75 --reference ${params.genome} -o ${fam}_merged.svelt.vcf --write-merge-table ${fam}_merged.svelt.tsv ${src}
     """
 
     stub:
@@ -89,8 +90,33 @@ process venn {
 
     stub:
     """
-    touch ${fam}_fam.pdf
+    touch ${fam}_venn.pdf
     """
+}
+
+process difference_summary {
+    publishDir 'results', mode: 'copy'
+
+    input:
+    tuple val(fam), path(s), path(j), path(src)
+
+    output:
+    tuple val(fam), path("${fam}_svelt_summary.tsv"), path("${fam}_jasmine_summary.tsv")
+
+    script:
+    """
+    python3 ${params.scripts}/differences.py ${fam}_svelt_summary.csv ${fam}_jasmine_summary.csv ${s} ${j} ${src}
+
+    tr ',' '\t' < ${fam}_svelt_summary.csv > ${fam}_svelt_summary.tsv
+
+    tr ',' '\t' < ${fam}_jasmine_summary.csv > ${fam}_jasmine_summary.tsv
+    """
+
+    stub:
+    """
+    touch ${fam}_svelt_summary.csv ${fam}_jasmine_summary.csv
+    """
+
 }
 
 workflow {
@@ -110,9 +136,11 @@ workflow {
                 map { [it[0], it[1].collect { x -> x[1] }] }
 
     svelted = grouped | svelt
-    jasmined = grouped | jasmine | view()
+    jasmined = grouped | jasmine
     paired = svelted.combine(jasmined, by: 0)
     venn(paired) | view()
+    extra_paired = paired.combine(grouped, by: 0)
+    difference_summary(extra_paired) | view()
     
     //def n = 0
     //def m = 0

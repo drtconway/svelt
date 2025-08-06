@@ -18,6 +18,10 @@ pub struct MergeOptions {
     #[arg(long, required = false, default_value = "0.9")]
     pub length_ratio: f64,
 
+    /// Allowed length difference for merging two events
+    #[arg(long, required = false, default_value = "25")]
+    pub length_window: u32,
+
     /// Write out the final merge table
     #[arg(long)]
     pub write_merge_table: Option<String>,

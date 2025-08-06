@@ -25,6 +25,11 @@ pub async fn produce_reporting_table(tbl: DataFrame, out: &str) -> std::io::Resu
         .with_column(
             "length_ratio",
             round(vec![col("length_ratio") * lit(100.0)]) / lit(100.0),
+        )?
+        .with_column(
+            "length_difference",
+            greatest(vec![abs(col("length")), abs(col("primary_length"))])
+                - least(vec![abs(col("length")), abs(col("primary_length"))]),
         )?;
 
     // Move alt_seq to the back to make the table more readable
