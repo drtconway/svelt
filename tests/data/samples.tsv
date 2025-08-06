@@ -8,3 +8,6 @@ HPG_MEXc	NA20827c	NA20827.cutesv.vcf
 AshkTrio	HG002	HG002vGRCh38_wm_50md_PBCCS_sniffles.s2l20.refined.nSVtypes.ism.vcf
 AshkTrio	HG003	HG003vGRCh38_wm_50md_PBCCS_sniffles.s2l20.refined.nSVtypes.ism.vcf
 AshkTrio	HG004	HG004vGRCh38_wm_50md_PBCCS_sniffles.s2l20.refined.nSVtypes.ism.vcf
+RDN0126	RDN0126-0	LRS00033-00-PB-03.hg38.sniffles.sv.phased.vcf
+RDN0126	RDN0126-1	LRS00033-01-PB-03.hg38.sniffles.sv.phased.vcf
+RDN0126	RDN0126-2	LRS00033-02-PB-03.hg38.sniffles.sv.phased.vcf
