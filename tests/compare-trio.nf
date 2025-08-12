@@ -114,9 +114,57 @@ process difference_summary {
 
     stub:
     """
-    touch ${fam}_svelt_summary.csv ${fam}_jasmine_summary.csv
+    touch ${fam}_svelt_summary.tsv ${fam}_jasmine_summary.tsv
+    """
+}
+
+process positions_summary {
+    publishDir 'results', mode: 'copy'
+
+    input:
+    tuple val(fam), path(s), path(j), path(src)
+
+    output:
+    tuple val(fam), path("${fam}_positions.tsv")
+
+    script:
+    """
+    python3 ${params.scripts}/positions.py ${fam}_positions.csv ${s} ${j} ${src}
+
+    tr ',' '\t' < ${fam}_positions.csv > ${fam}_positions.tsv
     """
 
+    stub:
+    """
+    touch ${fam}_positions.tsv
+    """
+}
+
+process sample_vcf_files {
+    publishDir 'results', mode: 'copy'
+
+    input:
+    tuple val(fam), path(s), path(j), path(src)
+
+    output:
+    path 'sampled/*'
+
+    script:
+    """
+    mkdir -p sampled
+
+    python3 ${params.scripts}/sample-variants.py ${j} sampled ${src}
+    """
+
+    stub:
+    """
+    mkdir - p sampled
+
+    for f in ${src}
+    do
+        touch samples/\$f
+    done
+    """
 }
 
 workflow {
@@ -141,12 +189,6 @@ workflow {
     venn(paired) | view()
     extra_paired = paired.combine(grouped, by: 0)
     difference_summary(extra_paired) | view()
-    
-    //def n = 0
-    //def m = 0
-    //trios = Channel.from(params.sources) | map { p -> tuple(++n, p) } | prepare | collate(3) | map { p -> tuple(++m, p) } | view()
-    //s = svelt(trios) | view()
-    //j = jasmine(trios) | view()
-    //c = s.combine(j, by: 0) | view()
-    //venn(c) | view()
+    positions_summary(extra_paired) | view()
+    sample_vcf_files(extra_paired) | view()
 }
