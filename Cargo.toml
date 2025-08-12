@@ -15,7 +15,7 @@ debug = false
 autocompress = "0.6.0"
 base62 = "2.2.1"
 blake2 = "0.10.6"
-clap = { version = "4.5.42", features = ["derive"] }
+clap = { version = "4.5.44", features = ["derive"] }
 datafusion = { version = "49.0.0", features = ["parquet"] }
 env_logger = "0.11.8"
 itertools = "0.14.0"
