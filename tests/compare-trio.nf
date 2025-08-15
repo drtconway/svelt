@@ -31,7 +31,7 @@ process svelt {
     tuple val(fam), path(src, name: '?/*')
 
     output:
-    tuple val(fam), path("${fam}_merged.svelt.vcf")
+    tuple val(fam), path("${fam}_merged.svelt.vcf"), path("${fam}_merged.svelt.tsv")
 
     script:
     """
@@ -183,7 +183,7 @@ workflow {
                 groupTuple(sort: {lhs, rhs -> lhs[0].sample.compareTo(rhs[0].sample)}) | \
                 map { [it[0], it[1].collect { x -> x[1] }] }
 
-    svelted = grouped | svelt
+    svelted = grouped | svelt | map { item -> tuple(item[0], item[1]) }
     jasmined = grouped | jasmine
     paired = svelted.combine(jasmined, by: 0)
     venn(paired) | view()
