@@ -1,4 +1,3 @@
-from itertools import chain
 import sys
 from pysam import VariantFile
 from datafusion import SessionContext, col, functions as f, lit
