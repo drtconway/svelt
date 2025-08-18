@@ -123,7 +123,7 @@ impl<'a> Iterator for MergeVectorCursor<'a> {
             let i = self.i;
             self.i += 1;
             let begin = self.toc[i];
-            let end = self.toc[i];
+            let end = self.toc[i + 1];
             Some((self.kmers[i], &self.postings[begin..end]))
         } else {
             None

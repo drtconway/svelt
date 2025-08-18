@@ -1,7 +1,22 @@
-params.genome = "${projectDir}/data/genome.fa"
-params.sources = file("${projectDir}/data/*.sniffles.vcf")
+params.genome = file("${projectDir}/data/genome.fa")
+params.features = file("${projectDir}/data/rmsk-selected.fasta")
 params.samples = file("${projectDir}/data/samples.tsv")
 params.scripts = file("${projectDir}/scripts")
+
+process index_features {
+    input:
+    path(src)
+
+    output:
+    path("feature-index")
+
+    script:
+    """
+    mkdir feature-index
+
+    svelt index-features --features ${src} --out feature-index/index
+    """
+}
 
 process prepare {
     input:
@@ -27,6 +42,7 @@ process svelt {
     publishDir 'results', mode: 'copy'
 
     input:
+    path(features)
     tuple val(fam), path(src, name: '?/*')
 
     output:
@@ -34,7 +50,12 @@ process svelt {
 
     script:
     """
-    svelt merge --position-window 75 --reference ${params.genome} -o ${fam}_merged.svelt.vcf --write-merge-table ${fam}_merged.svelt.tsv ${src}
+    svelt merge --position-window 75 \
+                --reference ${params.genome} \
+                --annotate-insertions ${features}/index \
+                -o ${fam}_merged.svelt.vcf \
+                --write-merge-table ${fam}_merged.svelt.tsv \
+                ${src}
     """
 
     stub:
@@ -172,13 +193,15 @@ workflow {
         meta.source = samples_root / row.vcf_file
         [meta, samples_root / row.vcf_file] }
 
+    features = index_features(params.features)
+
     prepared = samples | prepare 
 
     grouped = prepared | map { item -> def meta = item[0]; [meta.family, item] } | \
                 groupTuple(sort: {lhs, rhs -> lhs[0].sample.compareTo(rhs[0].sample)}) | \
                 map { [it[0], it[1].collect { x -> x[1] }] }
 
-    svelted = grouped | svelt | map { item -> tuple(item[0], item[1]) }
+    svelted = svelt(features, grouped) | map { item -> tuple(item[0], item[1]) }
     jasmined = grouped | jasmine
     paired = svelted.combine(jasmined, by: 0)
     venn(paired)
