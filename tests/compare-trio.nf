@@ -18,9 +18,8 @@ process prepare {
     """
 
     stub:
-    def out_name = "${meta.sample}_renamed.vcf"
     """
-    touch ${out_name}
+    touch ${meta.sample}_renamed.vcf
     """
 }
 
@@ -158,12 +157,8 @@ process sample_vcf_files {
 
     stub:
     """
-    mkdir - p sampled
-
-    for f in ${src}
-    do
-        touch samples/\$f
-    done
+    mkdir -p sampled
+    touch sampled/dummy.vcf
     """
 }
 
@@ -186,9 +181,9 @@ workflow {
     svelted = grouped | svelt | map { item -> tuple(item[0], item[1]) }
     jasmined = grouped | jasmine
     paired = svelted.combine(jasmined, by: 0)
-    venn(paired) | view()
+    venn(paired)
     extra_paired = paired.combine(grouped, by: 0)
-    difference_summary(extra_paired) | view()
-    positions_summary(extra_paired) | view()
-    sample_vcf_files(extra_paired) | view()
+    difference_summary(extra_paired)
+    positions_summary(extra_paired)
+    sample_vcf_files(extra_paired)
 }
