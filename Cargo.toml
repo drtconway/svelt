@@ -13,16 +13,16 @@ debug = false
 
 [dependencies]
 autocompress = "0.6.0"
-base62 = "2.2.1"
+base62 = "2.2.3"
 blake2 = "0.10.6"
-clap = { version = "4.5.45", features = ["derive"] }
-datafusion = { version = "49.0.0", features = ["parquet"] }
+clap = { version = "4.5.48", features = ["derive"] }
+datafusion = { version = "50.2.0", features = ["parquet"] }
 env_logger = "0.11.8"
 itertools = "0.14.0"
-log = "0.4.27"
-noodles = { version = "0.100.0", features = ["bed", "bgzf", "core", "fasta", "vcf"] }
+log = "0.4.28"
+noodles = { version = "0.101.0", features = ["bed", "bgzf", "core", "fasta", "vcf"] }
 rayon = "1.11.0"
-regex = "1.11.1"
+regex = "1.12.1"
 tokio = { version = "1.47.1", features = ["full"] }
 
 [dev-dependencies]
