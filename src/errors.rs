@@ -19,7 +19,7 @@ pub enum SveltError {
     ContigMissing(String, usize),
     ContigOrder(String, usize, usize),
     FileError(String, Box<dyn Error + Send + Sync + 'static>),
-    MissingAlt,
+    MissingBndAlt,
     MissingChr2,
     MissingInfo(String),
     MissingK(String),
@@ -86,8 +86,8 @@ impl Display for SveltError {
             SveltError::FileError(filename, _error) => {
                 write!(f, "Problem processing file '{}'", filename)
             }
-            SveltError::MissingAlt => {
-                write!(f, "Missing ALT")
+            SveltError::MissingBndAlt => {
+                write!(f, "Missing or badly formed ALT in BND variant")
             }
             SveltError::MissingChr2 => {
                 write!(f, "Missing CHR2 INFO field")

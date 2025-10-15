@@ -149,7 +149,7 @@ pub fn load_vcf_core(reader: &mut VcfReader) -> std::io::Result<RecordBatch> {
                             Ok(Some(*pos2 as i32))
                         }
                     } else {
-                        Err(SveltError::MissingAlt)
+                        Err(SveltError::MissingBndAlt)
                     }
                 } else {
                     Ok(None)
