@@ -3,8 +3,6 @@ use std::io::{BufWriter, Error, ErrorKind};
 use std::rc::Rc;
 use std::str::FromStr;
 
-use autocompress::io::ProcessorWriter;
-use autocompress::{CompressionLevel, Processor, autodetect_create};
 use noodles::core::Position;
 use noodles::fasta::Repository;
 use noodles::vcf;
@@ -28,8 +26,7 @@ use crate::breakends::{BreakEnd, parse_breakend};
 use crate::options::MergeOptions;
 use crate::tables::is_seq;
 
-pub type InnerWriter =
-    BufWriter<ProcessorWriter<Box<dyn Processor + Send + Unpin + 'static>, std::fs::File>>;
+pub type InnerWriter = BufWriter<Box<dyn std::io::Write + Send>>;
 pub struct MergeBuilder {
     writer: vcf::io::Writer<InnerWriter>,
     options: Rc<MergeOptions>,
@@ -45,7 +42,18 @@ impl MergeBuilder {
         header: Header,
         reference: Option<Rc<Repository>>,
     ) -> std::io::Result<MergeBuilder> {
-        let writer = autodetect_create(out, CompressionLevel::Default)?;
+        let format = std::path::Path::new(out)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|ext| match ext {
+                "gz" => niffler::send::compression::Format::Gzip,
+                "bz2" => niffler::send::compression::Format::Bzip,
+                "zst" => niffler::send::compression::Format::Zstd,
+                _ => niffler::send::compression::Format::No,
+            })
+            .unwrap_or(niffler::send::compression::Format::No);
+        let writer = niffler::send::to_path(std::path::Path::new(out), format, niffler::Level::Six)
+            .map_err(|e| Error::new(ErrorKind::Other, e))?;
         let writer = BufWriter::new(writer);
         let mut writer = vcf::io::Writer::new(writer);
         writer.write_header(&header)?;

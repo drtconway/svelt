@@ -384,7 +384,9 @@ pub async fn merge_vcfs(
 
 fn load_chroms(path: &str) -> std::io::Result<ChromSet> {
     FileContext::new(path).with(|| {
-        let reader = autocompress::autodetect_open(path)?;
+        let (reader, _) = niffler::send::from_path(std::path::Path::new(path))
+            .map_err(|e| Error::new(ErrorKind::Other, e))?;
+        let reader = std::io::BufReader::new(reader);
         let mut reader: vcf::io::Reader<Box<dyn BufRead>> =
             vcf::io::reader::Builder::default().build_from_reader(reader)?;
         let header: Header = reader.read_header()?;

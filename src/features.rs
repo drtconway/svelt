@@ -5,7 +5,6 @@ use std::{
     sync::Arc,
 };
 
-use autocompress::autodetect_open;
 use datafusion::{
     arrow::{
         array::{
@@ -34,7 +33,8 @@ pub struct FeatureIndex {
 
 impl FeatureIndex {
     pub async fn build(source: &str, options: &IndexingOptions) -> std::io::Result<FeatureIndex> {
-        let reader = autodetect_open(source).map_err(|e| wrap_file_error(e, source))?;
+        let (reader, _) = niffler::send::from_path(std::path::Path::new(source))
+            .map_err(|e| wrap_file_error(Error::new(ErrorKind::Other, e), source))?;
         let reader = BufReader::new(reader);
         let mut reader = fasta::io::reader::Builder::default().build_from_reader(reader)?;
 
