@@ -1,5 +1,7 @@
 use std::io::{BufReader, Error, ErrorKind};
 
+use noodles::fasta::record::Definition;
+
 use super::{InnerReader, SequenceIterator};
 
 pub struct FastaSequenceIterator {
@@ -16,7 +18,7 @@ impl FastaSequenceIterator {
     }
 
     pub(crate) fn read_one(&mut self) -> std::io::Result<Option<(String, String)>> {
-        let mut definition = String::new();
+        let mut definition = Definition::default();
         let mut sequence = Vec::new();
 
         let r1 = self.reader.read_definition(&mut definition)?;
@@ -25,12 +27,12 @@ impl FastaSequenceIterator {
             return Ok(None);
         }
 
-        let definition = String::from(&definition[1..]);
+        let label = definition.name().to_string();
 
         self.reader.read_sequence(&mut sequence)?;
         let sequence = String::from_utf8(sequence).map_err(|e| Error::new(ErrorKind::Other, e))?;
 
-        Ok(Some((definition, sequence)))
+        Ok(Some((label, sequence)))
     }
 }
 

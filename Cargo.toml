@@ -12,18 +12,18 @@ name = "svelt"
 debug = false
 
 [dependencies]
-base62 = "2.2.3"
+base62 = "2.2.4"
 blake2 = "0.10.6"
-clap = {version = "4.5.60", features = ["derive"]}
-datafusion = {version = "52.1.0", features = ["parquet"]}
-env_logger = "0.11.9"
-itertools = "0.14.0"
-log = "0.4.29"
-niffler = {version = "3.0.0", default-features = false, features = ["gz", "zstd"]}
-noodles = {version = "0.106.0", features = ["bed", "bgzf", "core", "fasta", "vcf"]}
+clap = {version = "4.6.3", features = ["derive"]}
+datafusion = {version = "54.0.0", features = ["parquet"]}
+env_logger = "0.11.11"
+itertools = "0.15.0"
+log = "0.4.33"
+niffler = {version = "3.0.1", default-features = false, features = ["gz", "zstd"]}
+noodles = {version = "0.112.0", features = ["bed", "bgzf", "core", "fasta", "vcf"]}
 rayon = "1.11.0"
-regex = "1.12.3"
+regex = "1.13.1"
 tokio = {version = "1.49.0", features = ["full"]}
 
 [dev-dependencies]
-rand = "0.10.0"
+rand = "0.10.2"

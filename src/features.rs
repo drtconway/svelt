@@ -52,7 +52,7 @@ impl FeatureIndex {
         for rec in reader.records() {
             let rec = rec?;
             let nix = sequence_number;
-            let name = rec.definition().to_string().split_off(1);
+            let name = rec.definition().name().to_string();
             let sequence = String::from_utf8(rec.sequence().as_ref().to_vec()).unwrap();
 
             let mut tmp: HashMap<u64, u32> = HashMap::new();
