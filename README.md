@@ -72,6 +72,24 @@ sequence involved to being highly homologous.
   are classified to show the best matching feature, which is included in
   the INFO field `SVELT_ALT_CLASS`.
 
+### Merge Criteria
+
+The following values may be given:
+
+- `exact` for cases where the SVs were exact matches.
+- `locus` for insertions where the locus is exact but the inserted sequence is not identical.
+- `near` for variants where the locus is nearby, but not exact.
+- `here` for BND variants where the "here" end matches but the "there" end does not.
+- `there` for BND variants where the "there" end matches but the "here" end does not.
+
+Merged variants may have more than one criterion. This can arise if different
+samples merge by different criteria. For example, consider a trio with a proband,
+mother, and father. If a (population) variant is an exact match between the proband
+and the mother, but an approximate match between them and the father, we would see
+a value `SVELT_CRITERIA=exact,near`. If all three samples have an insertion at the same
+locus, but two have an identical sequence, and one has a different, but similar one,
+then we would see `SVELT_CRITERIA=exact,locus`.
+
 ## TODO
 
 ## Output Generation

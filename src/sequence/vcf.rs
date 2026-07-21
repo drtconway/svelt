@@ -4,7 +4,6 @@ use crate::{
     errors::{as_io_error, wrap_file_error, Context, FileContext, SveltError, VariantContext},
     tables::is_seq,
 };
-use autocompress::autodetect_open;
 use noodles::vcf::{
     Header,
     variant::{
@@ -25,7 +24,9 @@ impl VcfSequenceIterator {
     pub fn new(filename: &str) -> std::io::Result<VcfSequenceIterator> {
         FileContext::new(filename).with(|| {
             let path = String::from(filename);
-            let reader = autodetect_open(&filename)?;
+            let (reader, _) = niffler::send::from_path(std::path::Path::new(filename))
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+            let reader = std::io::BufReader::new(reader);
             let mut reader: noodles::vcf::io::Reader<Box<dyn BufRead>> =
                 noodles::vcf::io::reader::Builder::default().build_from_reader(reader)?;
             let header = reader

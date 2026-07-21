@@ -1,7 +1,5 @@
 use std::io::{BufReader, Error, ErrorKind};
 
-use autocompress::autodetect_open;
-
 use super::{InnerReader, SequenceIterator};
 
 pub struct FastaSequenceIterator {
@@ -10,7 +8,8 @@ pub struct FastaSequenceIterator {
 
 impl FastaSequenceIterator {
     pub fn new(filename: &str) -> std::io::Result<FastaSequenceIterator> {
-        let reader = autodetect_open(filename)?;
+        let (reader, _) = niffler::send::from_path(std::path::Path::new(filename))
+            .map_err(|e| Error::new(ErrorKind::Other, e))?;
         let reader = BufReader::new(reader);
         let reader = noodles::fasta::io::reader::Builder::default().build_from_reader(reader)?;
         Ok(FastaSequenceIterator { reader })

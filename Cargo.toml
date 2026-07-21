@@ -1,9 +1,9 @@
 [package]
-name = "svelt"
-version = "0.1.22"
 edition = "2024"
+name = "svelt"
 readme = "README.md"
 repository = "https://github.com/drtconway/svelt"
+version = "0.1.23"
 
 [[bin]]
 name = "svelt"
@@ -12,18 +12,18 @@ name = "svelt"
 debug = false
 
 [dependencies]
-autocompress = "0.6.0"
-base62 = "2.2.1"
+base62 = "2.2.3"
 blake2 = "0.10.6"
-clap = { version = "4.5.45", features = ["derive"] }
-datafusion = { version = "49.0.0", features = ["parquet"] }
-env_logger = "0.11.8"
+clap = {version = "4.5.60", features = ["derive"]}
+datafusion = {version = "52.1.0", features = ["parquet"]}
+env_logger = "0.11.9"
 itertools = "0.14.0"
-log = "0.4.27"
-noodles = { version = "0.100.0", features = ["bed", "bgzf", "core", "fasta", "vcf"] }
+log = "0.4.29"
+niffler = {version = "3.0.0", default-features = false, features = ["gz", "zstd"]}
+noodles = {version = "0.106.0", features = ["bed", "bgzf", "core", "fasta", "vcf"]}
 rayon = "1.11.0"
-regex = "1.11.1"
-tokio = { version = "1.47.1", features = ["full"] }
+regex = "1.12.3"
+tokio = {version = "1.49.0", features = ["full"]}
 
 [dev-dependencies]
-rand = "0.9.2"
+rand = "0.10.0"

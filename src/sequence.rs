@@ -3,7 +3,6 @@ use std::{
     sync::Arc,
 };
 
-use autocompress::{Processor, io::ProcessorReader};
 use datafusion::{
     arrow::{
         array::{GenericStringBuilder, RecordBatch},
@@ -17,9 +16,7 @@ use crate::kmers::kmerize::kmers_fwd;
 
 pub trait SequenceIterator: Iterator<Item = std::io::Result<(String, String)>> {}
 
-type InnerReader = BufReader<
-    ProcessorReader<Box<dyn Processor + Send + Unpin + 'static>, BufReader<std::fs::File>>,
->;
+type InnerReader = BufReader<Box<dyn std::io::Read + Send>>;
 
 pub mod fasta;
 pub mod vcf;

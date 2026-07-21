@@ -3,8 +3,6 @@ use std::io::{BufWriter, Error, ErrorKind};
 use std::rc::Rc;
 use std::str::FromStr;
 
-use autocompress::io::ProcessorWriter;
-use autocompress::{CompressionLevel, Processor, autodetect_create};
 use noodles::core::Position;
 use noodles::fasta::Repository;
 use noodles::vcf;
@@ -12,6 +10,7 @@ use noodles::vcf::header::record::value::Map;
 use noodles::vcf::header::record::value::map::info::{Number, Type};
 use noodles::vcf::header::record::value::map::{Builder, Filter};
 use noodles::vcf::variant::io::Write;
+use noodles::vcf::variant::record::samples::series::value::Genotype as GenotypeExt;
 use noodles::vcf::variant::record::{
     AlternateBases as AlternateBases_, Filters as Filters_, Ids as Ids_,
 };
@@ -28,8 +27,7 @@ use crate::breakends::{BreakEnd, parse_breakend};
 use crate::options::MergeOptions;
 use crate::tables::is_seq;
 
-pub type InnerWriter =
-    BufWriter<ProcessorWriter<Box<dyn Processor + Send + Unpin + 'static>, std::fs::File>>;
+pub type InnerWriter = BufWriter<Box<dyn std::io::Write + Send>>;
 pub struct MergeBuilder {
     writer: vcf::io::Writer<InnerWriter>,
     options: Rc<MergeOptions>,
@@ -45,7 +43,18 @@ impl MergeBuilder {
         header: Header,
         reference: Option<Rc<Repository>>,
     ) -> std::io::Result<MergeBuilder> {
-        let writer = autodetect_create(out, CompressionLevel::Default)?;
+        let format = std::path::Path::new(out)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|ext| match ext {
+                "gz" => niffler::send::compression::Format::Gzip,
+                "bz2" => niffler::send::compression::Format::Bzip,
+                "zst" => niffler::send::compression::Format::Zstd,
+                _ => niffler::send::compression::Format::No,
+            })
+            .unwrap_or(niffler::send::compression::Format::No);
+        let writer = niffler::send::to_path(std::path::Path::new(out), format, niffler::Level::Six)
+            .map_err(|e| Error::new(ErrorKind::Other, e))?;
         let writer = BufWriter::new(writer);
         let mut writer = vcf::io::Writer::new(writer);
         writer.write_header(&header)?;
@@ -130,6 +139,40 @@ pub fn add_svelt_header_fields(
     }
 
     infos.insert(
+        String::from("AN"),
+        Builder::default()
+            .set_number(Number::Count(1))
+            .set_type(Type::Integer)
+            .set_description("Total number of alleles in called genotypes")
+            .build()
+            .map_err(|e| Error::new(ErrorKind::Other, e))?,
+    );
+
+    infos.insert(
+        String::from("AC"),
+        Builder::default()
+            .set_number(Number::A)
+            .set_type(Type::Integer)
+            .set_description(
+                "Allele count in genotypes, for each ALT allele, in the same order as listed",
+            )
+            .build()
+            .map_err(|e| Error::new(ErrorKind::Other, e))?,
+    );
+
+    infos.insert(
+        String::from("AF"),
+        Builder::default()
+            .set_number(Number::A)
+            .set_type(Type::Float)
+            .set_description(
+                "Allele frequency from genotypes, for each ALT allele, in the same order as listed",
+            )
+            .build()
+            .map_err(|e| Error::new(ErrorKind::Other, e))?,
+    );
+
+    infos.insert(
         String::from("ORIGINAL_IDS"),
         Builder::default()
             .set_number(Number::Unknown)
@@ -209,7 +252,7 @@ pub fn construct_record(
         0
     };
 
-    let ids = vec![the_variant_id];
+    let ids = vec![the_variant_id.clone()];
     let ids = Ids::from_iter(ids.into_iter());
 
     let (reference_bases, alternate_bases) = make_ref_and_alt(&the_record, options.force_alt_tags)?;
@@ -362,24 +405,14 @@ pub fn construct_record(
             Some(InfoValue::String(String::from(feature))),
         ));
     }
-    let info: Vec<(String, Option<InfoValue>)> = info
-        .into_iter()
-        .filter(|item| {
-            options
-                .unwanted_info
-                .iter()
-                .all(|unwanted| &item.0 != unwanted)
-        })
-        .collect();
-    let info = Info::from_iter(info.into_iter());
-
+    // Build samples first so we can compute AN/AC/AF for INFO
     let keys: Vec<String> = the_record
         .samples()
         .keys()
         .iter()
         .map(|k| String::from(k))
         .collect();
-    let mut samples = Vec::new();
+    let mut sample_rows: Vec<Vec<Option<Value>>> = Vec::new();
     for vix in 0..recs.len() {
         match &recs[vix] {
             Some((header, record)) => {
@@ -394,7 +427,7 @@ pub fn construct_record(
                             fields.push(None);
                         }
                     }
-                    samples.push(fields);
+                    sample_rows.push(fields);
                 }
             }
             None => {
@@ -403,13 +436,76 @@ pub fn construct_record(
                         .iter()
                         .map(|k| make_empty_fmt_value(options, k))
                         .collect();
-                    samples.push(fields);
+                    sample_rows.push(fields);
                 }
             }
         }
     }
+
+    // Compute AN, AC, AF from genotypes
+    let (an, ac) = {
+        let gt_index = keys.iter().position(|k| k == "GT");
+        let mut an: i32 = 0;
+        let mut ac: i32 = 0;
+        if let Some(gti) = gt_index {
+            for fields in &sample_rows {
+                if let Some(Some(Value::Genotype(gt))) = fields.get(gti) {
+                    for allele in gt.iter() {
+                        if let Ok((position, _)) = allele {
+                            match position {
+                                Some(0) => an += 1,
+                                Some(_) => {
+                                    an += 1;
+                                    ac += 1;
+                                }
+                                None => {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        (an, ac)
+    };
+    let af: f32 = if an > 0 { ac as f32 / an as f32 } else { 0.0 };
+
+    if ac == 0 {
+        log::warn!(
+            "Merged variant {}:{} ({}) has AC=0, AN={}, AF={:.4}",
+            chrom,
+            variant_start,
+            the_variant_id,
+            an,
+            af
+        );
+    }
+
+    // Replace any existing AN/AC/AF with freshly computed values, then apply unwanted filter
+    let info: Vec<(String, Option<InfoValue>)> = info
+        .into_iter()
+        .filter(|item| item.0 != "AN" && item.0 != "AC" && item.0 != "AF")
+        .chain([
+            (String::from("AN"), Some(InfoValue::Integer(an))),
+            (
+                String::from("AC"),
+                Some(InfoValue::Array(InfoArray::Integer(vec![Some(ac)]))),
+            ),
+            (
+                String::from("AF"),
+                Some(InfoValue::Array(InfoArray::Float(vec![Some(af)]))),
+            ),
+        ])
+        .filter(|item| {
+            options
+                .unwanted_info
+                .iter()
+                .all(|unwanted| &item.0 != unwanted)
+        })
+        .collect();
+    let info = Info::from_iter(info.into_iter());
+
     let keys = Keys::from_iter(keys.into_iter());
-    let samples = Samples::new(keys, samples);
+    let samples = Samples::new(keys, sample_rows);
 
     let bldr = RecordBuf::builder();
     let res = bldr

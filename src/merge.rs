@@ -1,6 +1,5 @@
 use std::{
-    io::{BufRead, Error, ErrorKind},
-    rc::Rc,
+    collections::HashMap, io::{BufRead, Error, ErrorKind}, rc::Rc
 };
 
 use datafusion::{
@@ -70,6 +69,38 @@ pub async fn merge_vcfs(
         readers.push(reader);
     }
     let n = readers.len();
+
+    let mut sample_to_files: HashMap<String, Vec<String>> = HashMap::new();
+    for (reader, path) in readers.iter().zip(vcf.iter()) {
+        for s in reader.header.sample_names() {
+            sample_to_files.entry(s.clone()).or_default().push(path.clone());
+        }
+    }
+    let mut duplicate_samples = Vec::new();
+    for (sample, files) in &sample_to_files {
+        if files.len() > 1 {
+            duplicate_samples.push((sample.clone(), files.clone()));
+        }
+    }
+    duplicate_samples.sort_by(|(s1, _), (s2, _)| s1.cmp(s2));
+    
+    if !duplicate_samples.is_empty() {
+        log::error!("Duplicate sample names found in input VCFs:");
+        for (sample, files) in &duplicate_samples {
+            log::error!("Sample '{}' appears in files: {:?}", sample, files);
+        }
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "Duplicate sample names found in input VCFs: {}",
+                duplicate_samples
+                    .iter()
+                    .map(|(s, _)| s.clone())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        ));
+    }
 
     let ctx = make_session_context(common);
 
@@ -353,7 +384,9 @@ pub async fn merge_vcfs(
 
 fn load_chroms(path: &str) -> std::io::Result<ChromSet> {
     FileContext::new(path).with(|| {
-        let reader = autocompress::autodetect_open(path)?;
+        let (reader, _) = niffler::send::from_path(std::path::Path::new(path))
+            .map_err(|e| Error::new(ErrorKind::Other, e))?;
+        let reader = std::io::BufReader::new(reader);
         let mut reader: vcf::io::Reader<Box<dyn BufRead>> =
             vcf::io::reader::Builder::default().build_from_reader(reader)?;
         let header: Header = reader.read_header()?;
